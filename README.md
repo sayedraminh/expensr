@@ -16,6 +16,22 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Auth and Convex
+
+Clerk is the source of truth for accounts. Convex stores a lightweight `users`
+row the first time a signed-in user opens the app, and app data is scoped with
+Convex's stable Clerk `tokenIdentifier`.
+
+If you need to attach data created before auth existed, set the allowed account
+in Convex environment variables before using the settings-page migration button:
+
+```bash
+npx convex env set LEGACY_DATA_CLAIM_USER_IDS "https://your-clerk-issuer|user_yourClerkUserId"
+```
+
+Leave `LEGACY_DATA_CLAIM_USER_IDS` unset in public deployments unless you are
+actively running that one-time migration.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
