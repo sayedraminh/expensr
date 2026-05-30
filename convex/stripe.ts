@@ -10,9 +10,16 @@ import { v } from "convex/values";
 import type { ActionCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { assertOwner, requireUserId } from "./authHelpers";
+import {
+  addRevenueToStats,
+  markRevenueStatsVersion,
+  removeRevenueFromStats,
+  replaceRevenueInStats,
+} from "./revenueStats";
 
 const STRIPE_API_URL = "https://api.stripe.com";
 const STRIPE_PAGE_SIZE = 100;
+const STRIPE_REQUEST_TIMEOUT_MS = 30_000;
 const SYNC_OVERLAP_SECONDS = 3 * 24 * 60 * 60;
 const MAX_SYNC_PAGES = 100;
 const MAX_CONNECTIONS = 20;
@@ -351,12 +358,29 @@ async function stripeGet<T>(
     addParam(searchParams, key, value);
   }
 
-  const response = await fetch(`${STRIPE_API_URL}${path}?${searchParams}`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    STRIPE_REQUEST_TIMEOUT_MS
+  );
+
+  let response: Response;
+  try {
+    response = await fetch(`${STRIPE_API_URL}${path}?${searchParams}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new StripeRequestError("Stripe request timed out.", "timeout");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
@@ -980,6 +1004,9 @@ export const applySyncPage = internalMutation({
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.stripeConnectionId);
     assertOwner(connection, args.userId, "Stripe connection not found");
+    if (connection.status === "disconnected") {
+      return emptySummary();
+    }
 
     const summary = emptySummary();
     for (const revenue of args.revenues) {
@@ -995,7 +1022,7 @@ export const applySyncPage = internalMutation({
         )
         .unique();
 
-      const revenueFields = {
+      const revenueFields = markRevenueStatsVersion({
         title: revenue.title,
         amount: revenue.amount,
         date: revenue.date,
@@ -1011,15 +1038,17 @@ export const applySyncPage = internalMutation({
         notes: revenue.notes,
         source: "stripe" as const,
         userId: args.userId,
-      };
+      });
 
       if (existing) {
+        await replaceRevenueInStats(ctx, existing, revenueFields);
         await ctx.db.patch(existing._id, revenueFields);
         summary.updated += 1;
         continue;
       }
 
       await ctx.db.insert("revenues", revenueFields);
+      await addRevenueToStats(ctx, revenueFields);
       summary.imported += 1;
     }
 
@@ -1111,6 +1140,7 @@ export const deleteStripeConnectionRevenueBatch = internalMutation({
       .take(DELETE_STRIPE_REVENUE_BATCH_SIZE);
 
     for (const revenue of revenues) {
+      await removeRevenueFromStats(ctx, revenue);
       await ctx.db.delete(revenue._id);
     }
 

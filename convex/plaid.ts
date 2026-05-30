@@ -1057,11 +1057,6 @@ export const disconnectItem = action({
       }
     }
 
-    await ctx.runMutation(internal.plaid.markItemDisconnected, {
-      userId,
-      plaidItemId: args.plaidItemId,
-    });
-
     let deletedExpenses = 0;
     if (args.deleteTransactions === true) {
       let done = false;
@@ -1075,6 +1070,11 @@ export const disconnectItem = action({
         done = result.done;
       }
     }
+
+    await ctx.runMutation(internal.plaid.markItemDisconnected, {
+      userId,
+      plaidItemId: args.plaidItemId,
+    });
 
     return { disconnected: true, deletedExpenses };
   },

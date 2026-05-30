@@ -17,6 +17,7 @@ import type * as expenses from "../expenses.js";
 import type * as importSessions from "../importSessions.js";
 import type * as paymentMethods from "../paymentMethods.js";
 import type * as plaid from "../plaid.js";
+import type * as revenueStats from "../revenueStats.js";
 import type * as revenues from "../revenues.js";
 import type * as seed from "../seed.js";
 import type * as settings from "../settings.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   importSessions: typeof importSessions;
   paymentMethods: typeof paymentMethods;
   plaid: typeof plaid;
+  revenueStats: typeof revenueStats;
   revenues: typeof revenues;
   seed: typeof seed;
   settings: typeof settings;

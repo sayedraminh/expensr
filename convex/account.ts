@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { requireUserId } from "./authHelpers";
+import { removeRevenueFromStats } from "./revenueStats";
 
 const BATCH_SIZE = 128;
 const COUNT_LIMIT = 1001;
@@ -224,7 +225,36 @@ export const deleteMyData = mutation({
       .take(BATCH_SIZE);
 
     for (const row of expenses) await ctx.db.delete(row._id);
-    for (const row of revenues) await ctx.db.delete(row._id);
+    for (const row of revenues) {
+      await removeRevenueFromStats(ctx, row);
+      await ctx.db.delete(row._id);
+    }
+
+    let revenueStatsDeleted = 0;
+    let revenueMonthlyStatsDeleted = 0;
+    let revenueProviderStatsDeleted = 0;
+    if (revenues.length < BATCH_SIZE) {
+      const revenueStats = await ctx.db
+        .query("revenueStats")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(BATCH_SIZE);
+      const revenueMonthlyStats = await ctx.db
+        .query("revenueMonthlyStats")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(BATCH_SIZE);
+      const revenueProviderStats = await ctx.db
+        .query("revenueProviderStats")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(BATCH_SIZE);
+
+      for (const row of revenueStats) await ctx.db.delete(row._id);
+      for (const row of revenueMonthlyStats) await ctx.db.delete(row._id);
+      for (const row of revenueProviderStats) await ctx.db.delete(row._id);
+      revenueStatsDeleted = revenueStats.length;
+      revenueMonthlyStatsDeleted = revenueMonthlyStats.length;
+      revenueProviderStatsDeleted = revenueProviderStats.length;
+    }
+
     for (const row of importSessions) await ctx.db.delete(row._id);
     for (const row of categories) await ctx.db.delete(row._id);
     for (const row of paymentMethods) await ctx.db.delete(row._id);
@@ -236,6 +266,9 @@ export const deleteMyData = mutation({
     const done =
       expenses.length < BATCH_SIZE &&
       revenues.length < BATCH_SIZE &&
+      revenueStatsDeleted < BATCH_SIZE &&
+      revenueMonthlyStatsDeleted < BATCH_SIZE &&
+      revenueProviderStatsDeleted < BATCH_SIZE &&
       importSessions.length < BATCH_SIZE &&
       categories.length < BATCH_SIZE &&
       paymentMethods.length < BATCH_SIZE &&
@@ -249,6 +282,9 @@ export const deleteMyData = mutation({
       deleted: {
         expenses: expenses.length,
         revenues: revenues.length,
+        revenueStats: revenueStatsDeleted,
+        revenueMonthlyStats: revenueMonthlyStatsDeleted,
+        revenueProviderStats: revenueProviderStatsDeleted,
         importSessions: importSessions.length,
         categories: categories.length,
         paymentMethods: paymentMethods.length,

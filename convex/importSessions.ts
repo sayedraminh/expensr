@@ -1,6 +1,7 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { assertOwner, requireUserId } from "./authHelpers";
+import { removeRevenueFromStats } from "./revenueStats";
 
 const MAX_IMPORT_SESSIONS = 1000;
 const DELETE_BATCH_SIZE = 128;
@@ -150,6 +151,7 @@ export const remove = mutation({
 
       batchSize = batch.length;
       for (const revenue of batch) {
+        await removeRevenueFromStats(ctx, revenue);
         await ctx.db.delete(revenue._id);
         deletedRevenues += 1;
       }

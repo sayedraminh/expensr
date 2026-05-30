@@ -71,6 +71,7 @@ export default defineSchema({
       v.literal("stripe")
     ),
     importSessionId: v.optional(v.id("importSessions")),
+    statsVersion: v.optional(v.number()),
     userId: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
@@ -78,6 +79,7 @@ export default defineSchema({
     .index("by_userId_and_provider", ["userId", "provider"])
     .index("by_userId_and_importSessionId", ["userId", "importSessionId"])
     .index("by_userId_and_source", ["userId", "source"])
+    .index("by_userId_and_statsVersion", ["userId", "statsVersion"])
     .index("by_userId_and_stripeBalanceTransactionId", [
       "userId",
       "stripeBalanceTransactionId",
@@ -89,6 +91,38 @@ export default defineSchema({
     .index("by_date", ["date"])
     .index("by_provider", ["provider"])
     .index("by_importSession", ["importSessionId"]),
+
+  revenueStats: defineTable({
+    userId: v.string(),
+    total: v.number(),
+    totalAmount: v.number(),
+    totalFees: v.number(),
+    totalNet: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId", ["userId"]),
+
+  revenueMonthlyStats: defineTable({
+    userId: v.string(),
+    month: v.string(),
+    amount: v.number(),
+    netAmount: v.number(),
+    count: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_month", ["userId", "month"]),
+
+  revenueProviderStats: defineTable({
+    userId: v.string(),
+    providerKey: v.string(),
+    provider: v.string(),
+    totalAmount: v.number(),
+    totalNet: v.number(),
+    count: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_providerKey", ["userId", "providerKey"]),
 
   categories: defineTable({
     name: v.string(),

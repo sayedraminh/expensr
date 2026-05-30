@@ -3,6 +3,12 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { assertOwner, requireUserId } from "./authHelpers";
+import {
+  addRevenueToStats,
+  markRevenueStatsVersion,
+  readRevenueStats,
+  removeRevenueFromStats,
+} from "./revenueStats";
 
 const MAX_REVENUES_FOR_FILTERING = 5000;
 const DELETE_IMPORTED_REVENUE_BATCH_SIZE = 128;
@@ -218,106 +224,16 @@ export const getStats = query({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
-    const allRevenues = await ctx.db
-      .query("revenues")
-      .withIndex("by_userId_and_date", (q) => q.eq("userId", userId))
-      .collect();
-
-    const total = allRevenues.length;
-    const totalAmount = allRevenues.reduce(
-      (sum, revenue) => sum + revenue.amount,
-      0,
-    );
-    const totalFees = allRevenues.reduce(
-      (sum, revenue) => sum + (revenue.fee ?? 0),
-      0,
-    );
-    const totalNet = allRevenues.reduce(
-      (sum, revenue) => sum + revenue.netAmount,
-      0,
-    );
-
-    const now = new Date();
-    const currentMonth = `${now.getFullYear()}-${String(
-      now.getMonth() + 1,
-    ).padStart(2, "0")}`;
-    const thisMonthRevenues = allRevenues.filter((revenue) =>
-      revenue.date.startsWith(currentMonth),
-    );
-    const thisMonthAmount = thisMonthRevenues.reduce(
-      (sum, revenue) => sum + revenue.amount,
-      0,
-    );
-    const thisMonthNet = thisMonthRevenues.reduce(
-      (sum, revenue) => sum + revenue.netAmount,
-      0,
-    );
-
-    const monthlyMap = new Map<
-      string,
-      { amount: number; netAmount: number; count: number }
-    >();
-    for (const revenue of allRevenues) {
-      const month = revenue.date.substring(0, 7);
-      const existing = monthlyMap.get(month);
-
-      if (existing) {
-        existing.amount += revenue.amount;
-        existing.netAmount += revenue.netAmount;
-        existing.count += 1;
-        continue;
-      }
-
-      monthlyMap.set(month, {
-        amount: revenue.amount,
-        netAmount: revenue.netAmount,
-        count: 1,
-      });
-    }
-    const monthlyTotals = Array.from(monthlyMap.entries())
-      .map(([month, totals]) => ({ month, ...totals }))
-      .sort((a, b) => a.month.localeCompare(b.month));
-
-    const providerMap = new Map<
-      string,
-      { provider: string; totalAmount: number; totalNet: number; count: number }
-    >();
-    for (const revenue of allRevenues) {
-      const providerName = revenue.provider.trim() || "Unknown source";
-      const providerKey = providerName.toLowerCase();
-      const existing = providerMap.get(providerKey);
-
-      if (existing) {
-        existing.totalAmount += revenue.amount;
-        existing.totalNet += revenue.netAmount;
-        existing.count += 1;
-        continue;
-      }
-
-      providerMap.set(providerKey, {
-        provider: providerName,
-        totalAmount: revenue.amount,
-        totalNet: revenue.netAmount,
-        count: 1,
-      });
-    }
-    const providerTotals = Array.from(providerMap.values())
-      .sort(
-        (a, b) =>
-          b.totalAmount - a.totalAmount ||
-          a.provider.localeCompare(b.provider),
-      )
-      .slice(0, 8);
+    const stats = await readRevenueStats(ctx, userId);
+    const currentMonth = new Date().toISOString().slice(0, 7);
 
     return {
-      total,
-      totalAmount,
-      totalFees,
-      totalNet,
-      thisMonthAmount,
-      thisMonthNet,
-      monthlyTotals,
-      providerTotals,
+      ...stats,
+      thisMonthAmount: stats.thisMonth,
+      thisMonthNet:
+        stats.monthlyTotals.find((entry) =>
+          entry.month === currentMonth
+        )?.netAmount ?? 0,
     };
   },
 });
@@ -329,6 +245,7 @@ export const remove = mutation({
     const existing = await ctx.db.get(args.id);
     assertOwner(existing, userId, "Revenue entry not found");
 
+    await removeRevenueFromStats(ctx, existing);
     await ctx.db.delete(args.id);
   },
 });
@@ -345,6 +262,7 @@ export const deleteImportedRevenueBatch = mutation({
       .take(DELETE_IMPORTED_REVENUE_BATCH_SIZE);
 
     for (const revenue of revenues) {
+      await removeRevenueFromStats(ctx, revenue);
       await ctx.db.delete(revenue._id);
     }
 
@@ -419,7 +337,7 @@ export const bulkCreate = mutation({
           throw new Error("Invalid date value");
         }
 
-        await ctx.db.insert("revenues", {
+        const revenueFields = markRevenueStatsVersion({
           title: revenue.title,
           amount: revenue.amount,
           date: revenue.date,
@@ -430,10 +348,12 @@ export const bulkCreate = mutation({
           currency: revenue.currency,
           transactionId: revenue.transactionId,
           notes: revenue.notes,
-          source: "import",
+          source: "import" as const,
           importSessionId: args.importSessionId,
           userId,
         });
+        await ctx.db.insert("revenues", revenueFields);
+        await addRevenueToStats(ctx, revenueFields);
         imported += 1;
       } catch (error) {
         errors.push({
