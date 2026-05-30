@@ -26,7 +26,7 @@ import {
   Pencil,
   Trash2,
   Receipt,
-  Upload,
+  Landmark,
   Plus,
 } from "lucide-react";
 import Link from "next/link";
@@ -123,12 +123,12 @@ export function ExpenseTable({
         </div>
         <h3 className="mt-4 text-lg font-medium">No expenses yet</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Import a CSV file or add expenses manually.
+          Connect a bank account or add expenses manually.
         </p>
         <div className="mt-6 flex gap-3">
-          <Button variant="outline" render={<Link href="/import" />} nativeButton={false}>
-            <Upload className="mr-1.5 size-3.5" />
-            Import CSV
+          <Button variant="outline" render={<Link href="/accounts" />} nativeButton={false}>
+            <Landmark className="mr-1.5 size-3.5" />
+            Connect Bank
           </Button>
           <Button onClick={onAdd}>
             <Plus className="mr-1.5 size-3.5" />

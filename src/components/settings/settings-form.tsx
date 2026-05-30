@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useClerk, useUser } from "@clerk/nextjs";
-import { useMutation } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import { api } from "@/convex";
 import type { Id } from "@/convex";
 import { useAuthenticatedQuery } from "@/hooks/use-authenticated-query";
@@ -82,6 +82,10 @@ export function SettingsForm() {
   const accountOverview = useAuthenticatedQuery(api.account.getOverview, {});
   const claimLegacyData = useMutation(api.account.claimLegacyData);
   const deleteMyData = useMutation(api.account.deleteMyData);
+  const disconnectAllPlaidItems = useAction(api.plaid.disconnectAllItems);
+  const disconnectAllStripeConnections = useAction(
+    api.stripe.disconnectAllConnections,
+  );
 
   const [seeding, setSeeding] = useState(false);
   const [seedSuccess, setSeedSuccess] = useState(false);
@@ -146,6 +150,38 @@ export function SettingsForm() {
   };
 
   const deleteAllAccountData = async () => {
+    const disconnectErrors: string[] = [];
+
+    try {
+      const plaidResult = await disconnectAllPlaidItems();
+      if (plaidResult.failed > 0) {
+        disconnectErrors.push(
+          plaidResult.failures[0] ??
+            "Could not disconnect every Plaid bank connection.",
+        );
+      }
+    } catch (error) {
+      disconnectErrors.push(
+        error instanceof Error
+          ? error.message
+          : "Could not disconnect Plaid bank connections.",
+      );
+    }
+
+    try {
+      await disconnectAllStripeConnections();
+    } catch (error) {
+      disconnectErrors.push(
+        error instanceof Error
+          ? error.message
+          : "Could not disconnect Stripe connections.",
+      );
+    }
+
+    if (disconnectErrors.length > 0) {
+      throw new Error(disconnectErrors.join(" "));
+    }
+
     let done = false;
     while (!done) {
       const result = await deleteMyData();
@@ -155,7 +191,7 @@ export function SettingsForm() {
 
   const handleDeleteAppData = async () => {
     const confirmed = window.confirm(
-      "Delete all app data for this account? This removes expenses, revenue, imports, categories, payment methods, and settings.",
+      "Delete all app data for this account? This disconnects bank and Stripe connections, then removes expenses, revenue, imports, categories, payment methods, and settings.",
     );
     if (!confirmed) {
       return;
@@ -297,6 +333,21 @@ export function SettingsForm() {
                 count={accountOverview.paymentMethods.count}
                 hasMore={accountOverview.paymentMethods.hasMore}
               />
+              <AccountCount
+                label="bank connections"
+                count={accountOverview.plaidItems.count}
+                hasMore={accountOverview.plaidItems.hasMore}
+              />
+              <AccountCount
+                label="linked bank accounts"
+                count={accountOverview.plaidAccounts.count}
+                hasMore={accountOverview.plaidAccounts.hasMore}
+              />
+              <AccountCount
+                label="Stripe connections"
+                count={accountOverview.stripeConnections.count}
+                hasMore={accountOverview.stripeConnections.hasMore}
+              />
             </div>
           )}
 
@@ -429,7 +480,8 @@ export function SettingsForm() {
             <div>
               <p className="text-sm font-medium">Delete App Data</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Removes all Extracker records owned by this account.
+                Disconnects Plaid and Stripe first, then removes all Extracker
+                records owned by this account.
               </p>
             </div>
             <Button
@@ -575,8 +627,9 @@ export function SettingsForm() {
             <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
               <ShieldCheck className="mt-0.5 size-4 shrink-0" />
               <p>
-                Expenses, revenue, imports, categories, payment methods, and
-                settings are deleted before the Clerk account is removed.
+                Bank and Stripe connections are disconnected first. Expenses,
+                revenue, imports, categories, payment methods, and settings are
+                deleted before the Clerk account is removed.
               </p>
             </div>
             <div className="grid gap-2">

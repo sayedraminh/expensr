@@ -12,12 +12,16 @@ import type * as account from "../account.js";
 import type * as aiActions from "../aiActions.js";
 import type * as authHelpers from "../authHelpers.js";
 import type * as categories from "../categories.js";
+import type * as crons from "../crons.js";
 import type * as expenses from "../expenses.js";
 import type * as importSessions from "../importSessions.js";
 import type * as paymentMethods from "../paymentMethods.js";
+import type * as plaid from "../plaid.js";
+import type * as revenueStats from "../revenueStats.js";
 import type * as revenues from "../revenues.js";
 import type * as seed from "../seed.js";
 import type * as settings from "../settings.js";
+import type * as stripe from "../stripe.js";
 import type * as users from "../users.js";
 
 import type {
@@ -31,12 +35,16 @@ declare const fullApi: ApiFromModules<{
   aiActions: typeof aiActions;
   authHelpers: typeof authHelpers;
   categories: typeof categories;
+  crons: typeof crons;
   expenses: typeof expenses;
   importSessions: typeof importSessions;
   paymentMethods: typeof paymentMethods;
+  plaid: typeof plaid;
+  revenueStats: typeof revenueStats;
   revenues: typeof revenues;
   seed: typeof seed;
   settings: typeof settings;
+  stripe: typeof stripe;
   users: typeof users;
 }>;
 

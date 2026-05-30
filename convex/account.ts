@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { requireUserId } from "./authHelpers";
+import { removeRevenueFromStats } from "./revenueStats";
 
 const BATCH_SIZE = 128;
 const COUNT_LIMIT = 1001;
@@ -51,6 +52,18 @@ export const getOverview = query({
       .query("paymentMethods")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .take(COUNT_LIMIT);
+    const plaidItems = await ctx.db
+      .query("plaidItems")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(COUNT_LIMIT);
+    const plaidAccounts = await ctx.db
+      .query("plaidAccounts")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(COUNT_LIMIT);
+    const stripeConnections = await ctx.db
+      .query("stripeConnections")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(COUNT_LIMIT);
 
     const hasLegacyData =
       legacyClaimAllowed &&
@@ -87,6 +100,9 @@ export const getOverview = query({
       importSessions: countResult(importSessions),
       categories: countResult(categories),
       paymentMethods: countResult(paymentMethods),
+      plaidItems: countResult(plaidItems),
+      plaidAccounts: countResult(plaidAccounts),
+      stripeConnections: countResult(stripeConnections),
       hasLegacyData,
     };
   },
@@ -195,31 +211,87 @@ export const deleteMyData = mutation({
       .query("settings")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .take(BATCH_SIZE);
+    const plaidAccounts = await ctx.db
+      .query("plaidAccounts")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(BATCH_SIZE);
+    const plaidItems = await ctx.db
+      .query("plaidItems")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(BATCH_SIZE);
+    const stripeConnections = await ctx.db
+      .query("stripeConnections")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(BATCH_SIZE);
 
     for (const row of expenses) await ctx.db.delete(row._id);
-    for (const row of revenues) await ctx.db.delete(row._id);
+    for (const row of revenues) {
+      await removeRevenueFromStats(ctx, row);
+      await ctx.db.delete(row._id);
+    }
+
+    let revenueStatsDeleted = 0;
+    let revenueMonthlyStatsDeleted = 0;
+    let revenueProviderStatsDeleted = 0;
+    if (revenues.length < BATCH_SIZE) {
+      const revenueStats = await ctx.db
+        .query("revenueStats")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(BATCH_SIZE);
+      const revenueMonthlyStats = await ctx.db
+        .query("revenueMonthlyStats")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(BATCH_SIZE);
+      const revenueProviderStats = await ctx.db
+        .query("revenueProviderStats")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(BATCH_SIZE);
+
+      for (const row of revenueStats) await ctx.db.delete(row._id);
+      for (const row of revenueMonthlyStats) await ctx.db.delete(row._id);
+      for (const row of revenueProviderStats) await ctx.db.delete(row._id);
+      revenueStatsDeleted = revenueStats.length;
+      revenueMonthlyStatsDeleted = revenueMonthlyStats.length;
+      revenueProviderStatsDeleted = revenueProviderStats.length;
+    }
+
     for (const row of importSessions) await ctx.db.delete(row._id);
     for (const row of categories) await ctx.db.delete(row._id);
     for (const row of paymentMethods) await ctx.db.delete(row._id);
     for (const row of settings) await ctx.db.delete(row._id);
+    for (const row of plaidAccounts) await ctx.db.delete(row._id);
+    for (const row of plaidItems) await ctx.db.delete(row._id);
+    for (const row of stripeConnections) await ctx.db.delete(row._id);
 
     const done =
       expenses.length < BATCH_SIZE &&
       revenues.length < BATCH_SIZE &&
+      revenueStatsDeleted < BATCH_SIZE &&
+      revenueMonthlyStatsDeleted < BATCH_SIZE &&
+      revenueProviderStatsDeleted < BATCH_SIZE &&
       importSessions.length < BATCH_SIZE &&
       categories.length < BATCH_SIZE &&
       paymentMethods.length < BATCH_SIZE &&
-      settings.length < BATCH_SIZE;
+      settings.length < BATCH_SIZE &&
+      plaidAccounts.length < BATCH_SIZE &&
+      plaidItems.length < BATCH_SIZE &&
+      stripeConnections.length < BATCH_SIZE;
 
     return {
       done,
       deleted: {
         expenses: expenses.length,
         revenues: revenues.length,
+        revenueStats: revenueStatsDeleted,
+        revenueMonthlyStats: revenueMonthlyStatsDeleted,
+        revenueProviderStats: revenueProviderStatsDeleted,
         importSessions: importSessions.length,
         categories: categories.length,
         paymentMethods: paymentMethods.length,
         settings: settings.length,
+        plaidAccounts: plaidAccounts.length,
+        plaidItems: plaidItems.length,
+        stripeConnections: stripeConnections.length,
       },
     };
   },

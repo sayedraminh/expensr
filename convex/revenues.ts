@@ -3,8 +3,16 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { assertOwner, requireUserId } from "./authHelpers";
+import {
+  addRevenueToStats,
+  getCurrentLocalMonthKey,
+  markRevenueStatsVersion,
+  readRevenueStats,
+  removeRevenueFromStats,
+} from "./revenueStats";
 
 const MAX_REVENUES_FOR_FILTERING = 5000;
+const DELETE_IMPORTED_REVENUE_BATCH_SIZE = 128;
 
 const revenueFilterArgs = {
   provider: v.optional(v.string()),
@@ -12,6 +20,7 @@ const revenueFilterArgs = {
   endDate: v.optional(v.string()),
   search: v.optional(v.string()),
   importSessionId: v.optional(v.id("importSessions")),
+  limit: v.optional(v.number()),
 };
 
 type RevenueFilterArgs = {
@@ -20,7 +29,29 @@ type RevenueFilterArgs = {
   endDate?: string;
   search?: string;
   importSessionId?: Id<"importSessions">;
+  limit?: number;
 };
+
+type RevenueImportRow = {
+  title: string;
+  amount: number;
+  date: string;
+  provider: string;
+  customer?: string;
+  fee?: number;
+  netAmount: number;
+  currency?: string;
+  transactionId?: string;
+  notes?: string;
+};
+
+function getListLimit(value: number | undefined) {
+  if (value === undefined) {
+    return 500;
+  }
+
+  return Math.min(Math.max(Math.trunc(value), 1), 500);
+}
 
 function applyRevenueFilters(
   revenues: Doc<"revenues">[],
@@ -79,6 +110,26 @@ async function assertImportSessionBelongsToUser(
   assertOwner(importSession, userId, "Import session not found");
 }
 
+function validateRevenueImportRow(revenue: RevenueImportRow) {
+  if (revenue.amount <= 0) {
+    throw new Error("Amount must be greater than 0");
+  }
+  if (revenue.netAmount < 0) {
+    throw new Error("Net amount cannot be negative");
+  }
+  if (revenue.provider.trim() === "") {
+    throw new Error("Provider is required");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(revenue.date)) {
+    throw new Error("Date must be in YYYY-MM-DD format");
+  }
+
+  const parsed = new Date(`${revenue.date}T00:00:00Z`);
+  if (isNaN(parsed.getTime())) {
+    throw new Error("Invalid date value");
+  }
+}
+
 export const list = query({
   args: revenueFilterArgs,
   handler: async (ctx, args) => {
@@ -103,7 +154,7 @@ export const list = query({
       .order("desc")
       .take(MAX_REVENUES_FOR_FILTERING);
     const filtered = sortRevenues(applyRevenueFilters(allRevenues, args));
-    return filtered.slice(0, 500);
+    return filtered.slice(0, getListLimit(args.limit));
   },
 });
 
@@ -203,6 +254,24 @@ export const filteredSummary = query({
   },
 });
 
+export const getStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const stats = await readRevenueStats(ctx, userId);
+    const currentMonth = getCurrentLocalMonthKey();
+
+    return {
+      ...stats,
+      thisMonthAmount: stats.thisMonth,
+      thisMonthNet:
+        stats.monthlyTotals.find((entry) =>
+          entry.month === currentMonth
+        )?.netAmount ?? 0,
+    };
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("revenues") },
   handler: async (ctx, args) => {
@@ -210,7 +279,49 @@ export const remove = mutation({
     const existing = await ctx.db.get(args.id);
     assertOwner(existing, userId, "Revenue entry not found");
 
+    await removeRevenueFromStats(ctx, existing);
     await ctx.db.delete(args.id);
+  },
+});
+
+export const deleteImportedRevenueBatch = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const revenues = await ctx.db
+      .query("revenues")
+      .withIndex("by_userId_and_source", (q) =>
+        q.eq("userId", userId).eq("source", "import")
+      )
+      .take(DELETE_IMPORTED_REVENUE_BATCH_SIZE);
+
+    for (const revenue of revenues) {
+      await removeRevenueFromStats(ctx, revenue);
+      await ctx.db.delete(revenue._id);
+    }
+
+    let importSessionsDeleted = 0;
+    if (revenues.length === 0) {
+      const importSessions = await ctx.db
+        .query("importSessions")
+        .withIndex("by_userId_and_entityType", (q) =>
+          q.eq("userId", userId).eq("entityType", "revenue")
+        )
+        .take(DELETE_IMPORTED_REVENUE_BATCH_SIZE);
+
+      for (const importSession of importSessions) {
+        await ctx.db.delete(importSession._id);
+      }
+      importSessionsDeleted = importSessions.length;
+    }
+
+    return {
+      done:
+        revenues.length === 0 &&
+        importSessionsDeleted < DELETE_IMPORTED_REVENUE_BATCH_SIZE,
+      deletedRevenues: revenues.length,
+      deletedImportSessions: importSessionsDeleted,
+    };
   },
 });
 
@@ -243,46 +354,34 @@ export const bulkCreate = mutation({
       const revenue = args.revenues[i];
 
       try {
-        if (revenue.amount <= 0) {
-          throw new Error("Amount must be greater than 0");
-        }
-        if (revenue.netAmount < 0) {
-          throw new Error("Net amount cannot be negative");
-        }
-        if (revenue.provider.trim() === "") {
-          throw new Error("Provider is required");
-        }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(revenue.date)) {
-          throw new Error("Date must be in YYYY-MM-DD format");
-        }
-        const parsed = new Date(`${revenue.date}T00:00:00Z`);
-        if (isNaN(parsed.getTime())) {
-          throw new Error("Invalid date value");
-        }
-
-        await ctx.db.insert("revenues", {
-          title: revenue.title,
-          amount: revenue.amount,
-          date: revenue.date,
-          provider: revenue.provider,
-          customer: revenue.customer,
-          fee: revenue.fee,
-          netAmount: revenue.netAmount,
-          currency: revenue.currency,
-          transactionId: revenue.transactionId,
-          notes: revenue.notes,
-          source: "import",
-          importSessionId: args.importSessionId,
-          userId,
-        });
-        imported += 1;
+        validateRevenueImportRow(revenue);
       } catch (error) {
         errors.push({
           row: i + 1,
           message:
             error instanceof Error ? error.message : "Unknown import error",
         });
+        continue;
       }
+
+      const revenueFields = markRevenueStatsVersion({
+        title: revenue.title,
+        amount: revenue.amount,
+        date: revenue.date,
+        provider: revenue.provider,
+        customer: revenue.customer,
+        fee: revenue.fee,
+        netAmount: revenue.netAmount,
+        currency: revenue.currency,
+        transactionId: revenue.transactionId,
+        notes: revenue.notes,
+        source: "import" as const,
+        importSessionId: args.importSessionId,
+        userId,
+      });
+      await ctx.db.insert("revenues", revenueFields);
+      await addRevenueToStats(ctx, revenueFields);
+      imported += 1;
     }
 
     return { imported, errors };

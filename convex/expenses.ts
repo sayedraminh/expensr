@@ -14,6 +14,7 @@ const expenseFilterArgs = {
   endDate: v.optional(v.string()),
   search: v.optional(v.string()),
   importSessionId: v.optional(v.id("importSessions")),
+  limit: v.optional(v.number()),
 };
 
 type ExpenseFilterArgs = {
@@ -23,7 +24,16 @@ type ExpenseFilterArgs = {
   endDate?: string;
   search?: string;
   importSessionId?: Id<"importSessions">;
+  limit?: number;
 };
+
+function getListLimit(value: number | undefined) {
+  if (value === undefined) {
+    return 500;
+  }
+
+  return Math.min(Math.max(Math.trunc(value), 1), 500);
+}
 
 function applyExpenseFilters(
   expenses: Doc<"expenses">[],
@@ -156,8 +166,7 @@ export const list = query({
       return b._creationTime - a._creationTime;
     });
 
-    // Limit to 500
-    const limited = filtered.slice(0, 500);
+    const limited = filtered.slice(0, getListLimit(args.limit));
 
     // Join category and payment method data
     return limited.map((expense) => {

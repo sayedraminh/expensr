@@ -8,7 +8,7 @@ import {
   LayoutDashboard,
   LogOut,
   Receipt,
-  Upload,
+  Landmark,
   Tags,
   Settings,
   DollarSign,
@@ -43,7 +43,7 @@ const navItems = [
   { title: "Dashboard", href: "/", icon: LayoutDashboard },
   { title: "Expenses", href: "/expenses", icon: Receipt },
   { title: "Revenue", href: "/revenue", icon: TrendingUp },
-  { title: "Import CSV", href: "/import", icon: Upload },
+  { title: "Bank Accounts", href: "/accounts", icon: Landmark },
   { title: "Categories", href: "/categories", icon: Tags },
 ];
 
