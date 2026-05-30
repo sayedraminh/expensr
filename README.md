@@ -40,13 +40,16 @@ Set Plaid credentials in the Convex Dashboard environment variables:
 PLAID_CLIENT_ID=
 PLAID_SECRET=
 PLAID_ENV=sandbox
+PLAID_TOKEN_ENCRYPTION_SECRET=
 # Optional: pass a Plaid Link customization with Account Select enabled.
 PLAID_LINK_CUSTOMIZATION_NAME=
 ```
 
 The app creates Plaid Link tokens from Convex, exchanges public tokens server
-side, stores transaction sync cursors, and refreshes connected accounts every
-six hours with Convex crons.
+side, stores encrypted access tokens and transaction sync cursors, and refreshes
+connected accounts every six hours with Convex crons. Set
+`PLAID_TOKEN_ENCRYPTION_SECRET` in Convex to a random value at least 32
+characters long before connecting Plaid.
 
 ## Stripe
 

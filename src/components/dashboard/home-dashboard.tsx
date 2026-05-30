@@ -98,23 +98,32 @@ function getMonthKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function getRecentMonthKeys(count: number) {
+function getRecentMonthKeys(count: number, baseDate = new Date()) {
   const keys: string[] = [];
-  const date = new Date();
 
   for (let i = count - 1; i >= 0; i--) {
-    const d = new Date(date.getFullYear(), date.getMonth() - i, 1);
+    const d = new Date(baseDate.getFullYear(), baseDate.getMonth() - i, 1);
     keys.push(getMonthKey(d));
   }
 
   return keys;
 }
 
-function getCurrentMonthLabel() {
-  return new Date().toLocaleDateString("en-US", {
+function getCurrentMonthLabel(date = new Date()) {
+  return date.toLocaleDateString("en-US", {
     month: "long",
     year: "numeric",
   });
+}
+
+function getMonthDateRange(month: string) {
+  const [yearValue, monthValue] = month.split("-").map(Number);
+  const lastDay = new Date(yearValue, monthValue, 0).getDate();
+
+  return {
+    startDate: `${month}-01`,
+    endDate: `${month}-${String(lastDay).padStart(2, "0")}`,
+  };
 }
 
 function formatMonthLabel(month: string) {
@@ -135,32 +144,6 @@ function compactCurrency(amount: number) {
 
 function initialFor(value: string) {
   return value.trim().charAt(0).toUpperCase() || "$";
-}
-
-function groupByName<T>(
-  rows: T[],
-  getName: (row: T) => string,
-  getAmount: (row: T) => number,
-) {
-  const totals = new Map<string, MovementItem>();
-
-  for (const row of rows) {
-    const rawName = getName(row).trim() || "Unknown";
-    const key = rawName.toLowerCase();
-    const existing = totals.get(key);
-
-    if (existing) {
-      existing.amount += getAmount(row);
-      existing.count += 1;
-      continue;
-    }
-
-    totals.set(key, { name: rawName, amount: getAmount(row), count: 1 });
-  }
-
-  return Array.from(totals.values())
-    .sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name))
-    .slice(0, 4);
 }
 
 function average(values: number[]) {
@@ -706,19 +689,30 @@ function RevenueRows({ rows }: { rows: RevenueRow[] }) {
 
 export function HomeDashboard() {
   const { user } = useUser();
+  const now = new Date();
+  const currentMonth = getMonthKey(now);
+  const currentMonthLabel = getCurrentMonthLabel(now);
+  const recentMonthKeys = getRecentMonthKeys(6, now);
+  const currentMonthRange = getMonthDateRange(currentMonth);
   const expenseStats = useAuthenticatedQuery(api.expenses.getStats, {});
   const revenueStats = useAuthenticatedQuery(api.revenues.getStats, {});
-  const expenses = useAuthenticatedQuery(api.expenses.list, {});
-  const revenues = useAuthenticatedQuery(api.revenues.list, {});
-
-  const currentMonth = useMemo(() => getMonthKey(new Date()), []);
-  const currentMonthLabel = useMemo(() => getCurrentMonthLabel(), []);
-  const recentMonthKeys = useMemo(() => getRecentMonthKeys(6), []);
+  const currentExpenseSummary = useAuthenticatedQuery(
+    api.expenses.filteredSummary,
+    currentMonthRange,
+  );
+  const currentRevenueSummary = useAuthenticatedQuery(
+    api.revenues.filteredSummary,
+    currentMonthRange,
+  );
+  const expenses = useAuthenticatedQuery(api.expenses.list, { limit: 8 });
+  const revenues = useAuthenticatedQuery(api.revenues.list, { limit: 8 });
 
   const viewModel = useMemo(() => {
     if (
       expenseStats === undefined ||
       revenueStats === undefined ||
+      currentExpenseSummary === undefined ||
+      currentRevenueSummary === undefined ||
       expenses === undefined ||
       revenues === undefined
     ) {
@@ -727,12 +721,6 @@ export function HomeDashboard() {
 
     const typedExpenses = expenses as ExpenseRow[];
     const typedRevenues = revenues as RevenueRow[];
-    const currentExpenses = typedExpenses.filter((expense) =>
-      expense.date.startsWith(currentMonth),
-    );
-    const currentRevenues = typedRevenues.filter((revenue) =>
-      revenue.date.startsWith(currentMonth),
-    );
 
     const expenseMonthly = new Map(
       expenseStats.monthlyTotals.map((month) => [month.month, month.amount]),
@@ -767,24 +755,18 @@ export function HomeDashboard() {
     return {
       typedExpenses,
       typedRevenues,
-      currentMonthIn: currentRevenues.reduce(
-        (sum, revenue) => sum + revenue.netAmount,
-        0,
-      ),
-      currentMonthOut: currentExpenses.reduce(
-        (sum, expense) => sum + expense.amount,
-        0,
-      ),
-      topSources: groupByName(
-        currentRevenues,
-        (revenue) => revenue.provider,
-        (revenue) => revenue.netAmount,
-      ),
-      topSpend: groupByName(
-        currentExpenses,
-        (expense) => expense.vendor || expense.title,
-        (expense) => expense.amount,
-      ),
+      currentMonthIn: currentRevenueSummary.totalNet,
+      currentMonthOut: currentExpenseSummary.totalAmount,
+      topSources: currentRevenueSummary.providerTotals.map((provider) => ({
+        name: provider.provider,
+        amount: provider.totalNet,
+        count: provider.count,
+      })),
+      topSpend: currentExpenseSummary.vendorTotals.map((vendor) => ({
+        name: vendor.vendor,
+        amount: vendor.totalAmount,
+        count: vendor.count,
+      })),
       expenseBars,
       revenueBars,
       trendData,
@@ -792,7 +774,8 @@ export function HomeDashboard() {
       avgExpense3Months: average(expenseBars.map((bar) => bar.amount)),
     };
   }, [
-    currentMonth,
+    currentExpenseSummary,
+    currentRevenueSummary,
     expenseStats,
     expenses,
     recentMonthKeys,
@@ -803,6 +786,8 @@ export function HomeDashboard() {
   if (
     expenseStats === undefined ||
     revenueStats === undefined ||
+    currentExpenseSummary === undefined ||
+    currentRevenueSummary === undefined ||
     expenses === undefined ||
     revenues === undefined ||
     viewModel === null
@@ -838,7 +823,7 @@ export function HomeDashboard() {
           expenseCount={expenseStats.total}
           revenueCount={revenueStats.total}
           avgExpense={expenseStats.avgAmount}
-          thisMonthSpend={expenseStats.thisMonthTotal}
+          thisMonthSpend={viewModel.currentMonthOut}
         />
       </div>
 

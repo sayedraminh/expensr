@@ -138,8 +138,10 @@ export function StripeConnectionCard() {
   const visibleConnections =
     connections?.filter((connection) => connection.status !== "disconnected") ??
     [];
-  const activeConnection =
-    connections?.find((connection) => connection.status === "active") ?? null;
+  const savedConnection =
+    visibleConnections.find((connection) => connection.status === "active") ??
+    visibleConnections[0] ??
+    null;
   const lastSyncedAt =
     visibleConnections
       ?.map((connection) => connection.lastSyncedAt)
@@ -274,7 +276,11 @@ export function StripeConnectionCard() {
               <Skeleton className="mt-3 h-7 w-24" />
             ) : (
               <p className="mt-2 text-base font-medium">
-                {activeConnection ? "Connected" : "Not connected"}
+                {savedConnection
+                  ? savedConnection.status === "active"
+                    ? "Connected"
+                    : "Needs attention"
+                  : "Not connected"}
               </p>
             )}
           </div>
@@ -285,9 +291,9 @@ export function StripeConnectionCard() {
             </div>
             {connections === undefined ? (
               <Skeleton className="mt-3 h-7 w-28" />
-            ) : activeConnection ? (
+            ) : savedConnection ? (
               <p className="mt-2 font-mono text-base font-medium">
-                rk_{activeConnection.keyMode}_...{activeConnection.keyLast4}
+                rk_{savedConnection.keyMode}_...{savedConnection.keyLast4}
               </p>
             ) : (
               <p className="mt-2 text-base font-medium">No key stored</p>
@@ -334,7 +340,7 @@ export function StripeConnectionCard() {
                 ) : (
                   <KeyRound className="mr-1.5 size-3.5" />
                 )}
-                {activeConnection ? "Update Key" : "Connect Stripe"}
+                {savedConnection ? "Update Key" : "Connect Stripe"}
               </Button>
             </div>
           </div>

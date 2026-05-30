@@ -149,7 +149,9 @@ export default defineSchema({
   plaidItems: defineTable({
     userId: v.string(),
     itemId: v.string(),
-    accessToken: v.string(),
+    accessToken: v.optional(v.string()),
+    accessTokenCiphertext: v.optional(v.string()),
+    accessTokenNonce: v.optional(v.string()),
     institutionId: v.optional(v.string()),
     institutionName: v.optional(v.string()),
     cursor: v.optional(v.string()),

@@ -150,14 +150,37 @@ export function SettingsForm() {
   };
 
   const deleteAllAccountData = async () => {
-    const plaidResult = await disconnectAllPlaidItems();
-    if (plaidResult.failed > 0) {
-      throw new Error(
-        plaidResult.failures[0] ??
-          "Could not disconnect every Plaid bank connection.",
+    const disconnectErrors: string[] = [];
+
+    try {
+      const plaidResult = await disconnectAllPlaidItems();
+      if (plaidResult.failed > 0) {
+        disconnectErrors.push(
+          plaidResult.failures[0] ??
+            "Could not disconnect every Plaid bank connection.",
+        );
+      }
+    } catch (error) {
+      disconnectErrors.push(
+        error instanceof Error
+          ? error.message
+          : "Could not disconnect Plaid bank connections.",
       );
     }
-    await disconnectAllStripeConnections();
+
+    try {
+      await disconnectAllStripeConnections();
+    } catch (error) {
+      disconnectErrors.push(
+        error instanceof Error
+          ? error.message
+          : "Could not disconnect Stripe connections.",
+      );
+    }
+
+    if (disconnectErrors.length > 0) {
+      throw new Error(disconnectErrors.join(" "));
+    }
 
     let done = false;
     while (!done) {

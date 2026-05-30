@@ -13,6 +13,7 @@ const revenueFilterArgs = {
   endDate: v.optional(v.string()),
   search: v.optional(v.string()),
   importSessionId: v.optional(v.id("importSessions")),
+  limit: v.optional(v.number()),
 };
 
 type RevenueFilterArgs = {
@@ -21,7 +22,16 @@ type RevenueFilterArgs = {
   endDate?: string;
   search?: string;
   importSessionId?: Id<"importSessions">;
+  limit?: number;
 };
+
+function getListLimit(value: number | undefined) {
+  if (value === undefined) {
+    return 500;
+  }
+
+  return Math.min(Math.max(Math.trunc(value), 1), 500);
+}
 
 function applyRevenueFilters(
   revenues: Doc<"revenues">[],
@@ -104,7 +114,7 @@ export const list = query({
       .order("desc")
       .take(MAX_REVENUES_FOR_FILTERING);
     const filtered = sortRevenues(applyRevenueFilters(allRevenues, args));
-    return filtered.slice(0, 500);
+    return filtered.slice(0, getListLimit(args.limit));
   },
 });
 
@@ -211,7 +221,7 @@ export const getStats = query({
     const allRevenues = await ctx.db
       .query("revenues")
       .withIndex("by_userId_and_date", (q) => q.eq("userId", userId))
-      .take(MAX_REVENUES_FOR_FILTERING);
+      .collect();
 
     const total = allRevenues.length;
     const totalAmount = allRevenues.reduce(
@@ -333,26 +343,32 @@ export const deleteImportedRevenueBatch = mutation({
         q.eq("userId", userId).eq("source", "import")
       )
       .take(DELETE_IMPORTED_REVENUE_BATCH_SIZE);
-    const importSessions = await ctx.db
-      .query("importSessions")
-      .withIndex("by_userId_and_entityType", (q) =>
-        q.eq("userId", userId).eq("entityType", "revenue")
-      )
-      .take(DELETE_IMPORTED_REVENUE_BATCH_SIZE);
 
     for (const revenue of revenues) {
       await ctx.db.delete(revenue._id);
     }
-    for (const importSession of importSessions) {
-      await ctx.db.delete(importSession._id);
+
+    let importSessionsDeleted = 0;
+    if (revenues.length === 0) {
+      const importSessions = await ctx.db
+        .query("importSessions")
+        .withIndex("by_userId_and_entityType", (q) =>
+          q.eq("userId", userId).eq("entityType", "revenue")
+        )
+        .take(DELETE_IMPORTED_REVENUE_BATCH_SIZE);
+
+      for (const importSession of importSessions) {
+        await ctx.db.delete(importSession._id);
+      }
+      importSessionsDeleted = importSessions.length;
     }
 
     return {
       done:
-        revenues.length < DELETE_IMPORTED_REVENUE_BATCH_SIZE &&
-        importSessions.length < DELETE_IMPORTED_REVENUE_BATCH_SIZE,
+        revenues.length === 0 &&
+        importSessionsDeleted < DELETE_IMPORTED_REVENUE_BATCH_SIZE,
       deletedRevenues: revenues.length,
-      deletedImportSessions: importSessions.length,
+      deletedImportSessions: importSessionsDeleted,
     };
   },
 });

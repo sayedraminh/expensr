@@ -26,6 +26,7 @@ const MAX_ACCOUNTS_PER_ITEM = 100;
 const MAX_SYNC_ITEMS_PER_CRON = 50;
 const MAX_REFERENCE_ROWS = 1000;
 const DELETE_PLAID_ITEM_EXPENSE_BATCH_SIZE = 128;
+const PLAID_REQUEST_TIMEOUT_MS = 30_000;
 
 const CATEGORY_COLORS = [
   "#10b981",
@@ -204,6 +205,16 @@ type SyncableItem = {
   status: "active" | "disconnected" | "error";
 };
 
+type StoredPlaidItem = {
+  plaidItemId: Id<"plaidItems">;
+  userId: string;
+  accessToken?: string;
+  accessTokenCiphertext?: string;
+  accessTokenNonce?: string;
+  cursor?: string;
+  status: "active" | "disconnected" | "error";
+};
+
 type SyncSummary = {
   imported: number;
   updated: number;
@@ -312,30 +323,158 @@ function getErrorCode(value: unknown) {
   return typeof record?.error_code === "string" ? record.error_code : undefined;
 }
 
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function hasPlaidTokenEncryptionSecret() {
+  return (process.env.PLAID_TOKEN_ENCRYPTION_SECRET?.length ?? 0) >= 32;
+}
+
+function getPlaidTokenEncryptionSecret() {
+  const secret = process.env.PLAID_TOKEN_ENCRYPTION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "Plaid token encryption is not configured. Set PLAID_TOKEN_ENCRYPTION_SECRET in Convex to a random value at least 32 characters long."
+    );
+  }
+
+  return secret;
+}
+
+async function getPlaidTokenEncryptionKey() {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(getPlaidTokenEncryptionSecret())
+  );
+  return await crypto.subtle.importKey(
+    "raw",
+    digest,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptPlaidAccessToken(accessToken: string) {
+  const key = await getPlaidTokenEncryptionKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(accessToken)
+  );
+
+  return {
+    accessTokenCiphertext: bytesToBase64(new Uint8Array(ciphertext)),
+    accessTokenNonce: bytesToBase64(iv),
+  };
+}
+
+async function decryptPlaidAccessToken(ciphertext: string, nonce: string) {
+  const key = await getPlaidTokenEncryptionKey();
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: base64ToBytes(nonce) },
+    key,
+    base64ToBytes(ciphertext)
+  );
+
+  return new TextDecoder().decode(plaintext);
+}
+
+async function getStoredPlaidAccessToken(item: StoredPlaidItem) {
+  if (item.accessTokenCiphertext && item.accessTokenNonce) {
+    return await decryptPlaidAccessToken(
+      item.accessTokenCiphertext,
+      item.accessTokenNonce
+    );
+  }
+
+  const legacyAccessToken = optionalString(item.accessToken);
+  if (legacyAccessToken) {
+    return legacyAccessToken;
+  }
+
+  throw new Error("This bank connection does not have a usable access token.");
+}
+
+async function upgradeLegacyStoredAccessToken(
+  ctx: ActionCtx,
+  item: StoredPlaidItem,
+  accessToken: string
+) {
+  if (
+    item.accessTokenCiphertext ||
+    !optionalString(item.accessToken) ||
+    !hasPlaidTokenEncryptionSecret()
+  ) {
+    return;
+  }
+
+  const encryptedAccessToken = await encryptPlaidAccessToken(accessToken);
+  await ctx.runMutation(internal.plaid.storeEncryptedItemAccessToken, {
+    userId: item.userId,
+    plaidItemId: item.plaidItemId,
+    ...encryptedAccessToken,
+  });
+}
+
 async function plaidRequest<T>(
   path: string,
   payload: Record<string, unknown>
 ): Promise<T> {
   const config = getPlaidConfig();
-  const response = await fetch(`${config.apiUrl}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_id: config.clientId,
-      secret: config.secret,
-      ...payload,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    PLAID_REQUEST_TIMEOUT_MS
+  );
 
-  const data: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new PlaidRequestError(
-      getErrorMessage(data, `Plaid request failed with ${response.status}.`),
-      getErrorCode(data)
-    );
+  try {
+    const response = await fetch(`${config.apiUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: config.clientId,
+        secret: config.secret,
+        ...payload,
+      }),
+      signal: controller.signal,
+    });
+
+    const data: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new PlaidRequestError(
+        getErrorMessage(data, `Plaid request failed with ${response.status}.`),
+        getErrorCode(data)
+      );
+    }
+
+    return data as T;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new PlaidRequestError(
+        "Plaid request timed out. Try again in a few minutes.",
+        "REQUEST_TIMEOUT"
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return data as T;
 }
 
 function optionalString(value: string | null | undefined) {
@@ -806,11 +945,14 @@ export const exchangePublicToken = action({
       throw new Error("Plaid did not return an access token.");
     }
 
+    const encryptedAccessToken = await encryptPlaidAccessToken(
+      exchange.access_token
+    );
     const upsertResult: { plaidItemId: Id<"plaidItems">; cursor?: string } =
       await ctx.runMutation(internal.plaid.upsertItem, {
         userId,
         itemId: exchange.item_id,
-        accessToken: exchange.access_token,
+        ...encryptedAccessToken,
         institutionId: args.metadata?.institution?.institution_id,
         institutionName: args.metadata?.institution?.name,
       });
@@ -840,13 +982,23 @@ export const syncItem = action({
   args: { plaidItemId: v.id("plaidItems") },
   handler: async (ctx, args): Promise<SyncSummary> => {
     const userId = await requireUserId(ctx);
-    const item: SyncableItem | null = await ctx.runQuery(
+    const storedItem: StoredPlaidItem | null = await ctx.runQuery(
       internal.plaid.getSyncableItem,
       { userId, plaidItemId: args.plaidItemId }
     );
-    if (!item) {
+    if (!storedItem) {
       throw new Error("Bank connection not found.");
     }
+
+    const accessToken = await getStoredPlaidAccessToken(storedItem);
+    await upgradeLegacyStoredAccessToken(ctx, storedItem, accessToken);
+    const item: SyncableItem = {
+      plaidItemId: storedItem.plaidItemId,
+      userId: storedItem.userId,
+      accessToken,
+      cursor: storedItem.cursor,
+      status: storedItem.status,
+    };
 
     try {
       return await syncItemWithAccessToken(ctx, item);
@@ -864,13 +1016,28 @@ export const disconnectItem = action({
   },
   handler: async (ctx, args): Promise<DisconnectSummary> => {
     const userId = await requireUserId(ctx);
-    const item: SyncableItem | null = await ctx.runQuery(
+    const storedItem: StoredPlaidItem | null = await ctx.runQuery(
       internal.plaid.getItemForOwner,
       { userId, plaidItemId: args.plaidItemId }
     );
-    if (!item) {
+    if (!storedItem) {
       throw new Error("Bank connection not found.");
     }
+
+    const accessToken =
+      storedItem.status === "disconnected"
+        ? ""
+        : await getStoredPlaidAccessToken(storedItem);
+    if (accessToken.trim() !== "") {
+      await upgradeLegacyStoredAccessToken(ctx, storedItem, accessToken);
+    }
+    const item: SyncableItem = {
+      plaidItemId: storedItem.plaidItemId,
+      userId: storedItem.userId,
+      accessToken,
+      cursor: storedItem.cursor,
+      status: storedItem.status,
+    };
 
     if (item.status !== "disconnected" && item.accessToken.trim() !== "") {
       try {
@@ -917,21 +1084,40 @@ export const disconnectAllItems = action({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
-    const items: SyncableItem[] = await ctx.runQuery(
+    const items: StoredPlaidItem[] = await ctx.runQuery(
       internal.plaid.listDisconnectableItemsForUser,
       { userId }
     );
 
     let disconnected = 0;
     const failures: string[] = [];
-    for (const item of items) {
+    for (const storedItem of items) {
       try {
+        const accessToken = await getStoredPlaidAccessToken(storedItem);
+        await upgradeLegacyStoredAccessToken(ctx, storedItem, accessToken);
+        const item: SyncableItem = {
+          plaidItemId: storedItem.plaidItemId,
+          userId: storedItem.userId,
+          accessToken,
+          cursor: storedItem.cursor,
+          status: storedItem.status,
+        };
+
         if (item.accessToken.trim() !== "") {
-          await plaidRequest("/item/remove", {
-            access_token: item.accessToken,
-            reason_code: "OTHER",
-            reason_note: "User deleted Extracker data",
-          });
+          try {
+            await plaidRequest("/item/remove", {
+              access_token: item.accessToken,
+              reason_code: "OTHER",
+              reason_note: "User deleted Extracker data",
+            });
+          } catch (error) {
+            if (
+              !(error instanceof PlaidRequestError) ||
+              error.code !== "ITEM_NOT_FOUND"
+            ) {
+              throw error;
+            }
+          }
         }
         await ctx.runMutation(internal.plaid.markItemDisconnected, {
           userId,
@@ -941,7 +1127,12 @@ export const disconnectAllItems = action({
       } catch (error) {
         const syncError = getSyncError(error);
         failures.push(syncError.errorMessage);
-        await markSyncError(ctx, item, error);
+        await ctx.runMutation(internal.plaid.markItemError, {
+          userId: storedItem.userId,
+          plaidItemId: storedItem.plaidItemId,
+          errorCode: syncError.errorCode,
+          errorMessage: syncError.errorMessage,
+        });
       }
     }
 
@@ -956,20 +1147,33 @@ export const disconnectAllItems = action({
 export const syncAllConnectedItems = internalAction({
   args: {},
   handler: async (ctx) => {
-    const items: SyncableItem[] = await ctx.runQuery(
+    const items: StoredPlaidItem[] = await ctx.runQuery(
       internal.plaid.listSyncableItems,
       {}
     );
     const total = emptySummary();
     let failed = 0;
 
-    for (const item of items) {
+    for (const storedItem of items) {
       try {
+        const accessToken = await getStoredPlaidAccessToken(storedItem);
+        await upgradeLegacyStoredAccessToken(ctx, storedItem, accessToken);
+        const item: SyncableItem = {
+          plaidItemId: storedItem.plaidItemId,
+          userId: storedItem.userId,
+          accessToken,
+          cursor: storedItem.cursor,
+          status: storedItem.status,
+        };
         const itemSummary = await syncItemWithAccessToken(ctx, item);
         addSummaries(total, itemSummary);
       } catch (error) {
         failed += 1;
-        await markSyncError(ctx, item, error);
+        await ctx.runMutation(internal.plaid.markItemError, {
+          userId: storedItem.userId,
+          plaidItemId: storedItem.plaidItemId,
+          ...getSyncError(error),
+        });
       }
     }
 
@@ -1049,7 +1253,8 @@ export const upsertItem = internalMutation({
   args: {
     userId: v.string(),
     itemId: v.string(),
-    accessToken: v.string(),
+    accessTokenCiphertext: v.string(),
+    accessTokenNonce: v.string(),
     institutionId: v.optional(v.string()),
     institutionName: v.optional(v.string()),
   },
@@ -1064,7 +1269,9 @@ export const upsertItem = internalMutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        accessToken: args.accessToken,
+        accessToken: undefined,
+        accessTokenCiphertext: args.accessTokenCiphertext,
+        accessTokenNonce: args.accessTokenNonce,
         institutionId: args.institutionId,
         institutionName: args.institutionName,
         status: "active" as const,
@@ -1079,7 +1286,8 @@ export const upsertItem = internalMutation({
     const plaidItemId = await ctx.db.insert("plaidItems", {
       userId: args.userId,
       itemId: args.itemId,
-      accessToken: args.accessToken,
+      accessTokenCiphertext: args.accessTokenCiphertext,
+      accessTokenNonce: args.accessTokenNonce,
       institutionId: args.institutionId,
       institutionName: args.institutionName,
       status: "active" as const,
@@ -1088,6 +1296,25 @@ export const upsertItem = internalMutation({
     });
 
     return { plaidItemId };
+  },
+});
+
+export const storeEncryptedItemAccessToken = internalMutation({
+  args: {
+    userId: v.string(),
+    plaidItemId: v.id("plaidItems"),
+    accessTokenCiphertext: v.string(),
+    accessTokenNonce: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.plaidItemId);
+    assertOwner(item, args.userId, "Bank connection not found");
+    await ctx.db.patch(args.plaidItemId, {
+      accessToken: undefined,
+      accessTokenCiphertext: args.accessTokenCiphertext,
+      accessTokenNonce: args.accessTokenNonce,
+      updatedAt: Date.now(),
+    });
   },
 });
 
@@ -1107,6 +1334,8 @@ export const getSyncableItem = internalQuery({
       plaidItemId: item._id,
       userId: item.userId,
       accessToken: item.accessToken,
+      accessTokenCiphertext: item.accessTokenCiphertext,
+      accessTokenNonce: item.accessTokenNonce,
       cursor: item.cursor,
       status: item.status,
     };
@@ -1126,6 +1355,8 @@ export const getItemForOwner = internalQuery({
       plaidItemId: item._id,
       userId: item.userId,
       accessToken: item.accessToken,
+      accessTokenCiphertext: item.accessTokenCiphertext,
+      accessTokenNonce: item.accessTokenNonce,
       cursor: item.cursor,
       status: item.status,
     };
@@ -1152,6 +1383,8 @@ export const listSyncableItems = internalQuery({
       plaidItemId: item._id,
       userId: item.userId,
       accessToken: item.accessToken,
+      accessTokenCiphertext: item.accessTokenCiphertext,
+      accessTokenNonce: item.accessTokenNonce,
       cursor: item.cursor,
       status: item.status,
     }));
@@ -1172,6 +1405,8 @@ export const listDisconnectableItemsForUser = internalQuery({
         plaidItemId: item._id,
         userId: item.userId,
         accessToken: item.accessToken,
+        accessTokenCiphertext: item.accessTokenCiphertext,
+        accessTokenNonce: item.accessTokenNonce,
         cursor: item.cursor,
         status: item.status,
       }));
@@ -1192,6 +1427,9 @@ export const applySyncPage = internalMutation({
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.plaidItemId);
     assertOwner(item, args.userId, "Bank connection not found");
+    if (item.status === "disconnected") {
+      return emptySummary();
+    }
 
     const now = Date.now();
     const accountMap = new Map<string, Id<"plaidAccounts">>();
@@ -1332,6 +1570,10 @@ export const markItemError = internalMutation({
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.plaidItemId);
     assertOwner(item, args.userId, "Bank connection not found");
+    if (item.status === "disconnected") {
+      return;
+    }
+
     await ctx.db.patch(args.plaidItemId, {
       status: "error" as const,
       errorCode: args.errorCode,
@@ -1350,7 +1592,9 @@ export const markItemDisconnected = internalMutation({
     const item = await ctx.db.get(args.plaidItemId);
     assertOwner(item, args.userId, "Bank connection not found");
     await ctx.db.patch(args.plaidItemId, {
-      accessToken: "",
+      accessToken: undefined,
+      accessTokenCiphertext: undefined,
+      accessTokenNonce: undefined,
       status: "disconnected" as const,
       updatedAt: Date.now(),
     });

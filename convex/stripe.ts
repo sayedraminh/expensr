@@ -573,6 +573,12 @@ async function syncConnectionWithApiKey(
     pageCount += 1;
   }
 
+  if (hasMore) {
+    throw new Error(
+      `Stripe sync reached the ${MAX_SYNC_PAGES} page limit before finishing. Run the sync again to continue without advancing the saved sync time.`
+    );
+  }
+
   await ctx.runMutation(internal.stripe.finishConnectionSync, {
     userId: connection.userId,
     stripeConnectionId: connection.stripeConnectionId,
@@ -679,11 +685,6 @@ export const disconnectConnection = action({
       throw new Error("Stripe connection not found.");
     }
 
-    await ctx.runMutation(internal.stripe.markConnectionDisconnected, {
-      userId,
-      stripeConnectionId: args.stripeConnectionId,
-    });
-
     let deletedRevenue = 0;
     if (args.deleteRevenue === true) {
       let done = false;
@@ -700,6 +701,11 @@ export const disconnectConnection = action({
         done = result.done;
       }
     }
+
+    await ctx.runMutation(internal.stripe.markConnectionDisconnected, {
+      userId,
+      stripeConnectionId: args.stripeConnectionId,
+    });
 
     return { disconnected: true, deletedRevenue };
   },
@@ -1030,6 +1036,10 @@ export const finishConnectionSync = internalMutation({
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.stripeConnectionId);
     assertOwner(connection, args.userId, "Stripe connection not found");
+    if (connection.status === "disconnected") {
+      return;
+    }
+
     await ctx.db.patch(args.stripeConnectionId, {
       status: "active" as const,
       errorCode: undefined,
@@ -1050,6 +1060,10 @@ export const markConnectionError = internalMutation({
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.stripeConnectionId);
     assertOwner(connection, args.userId, "Stripe connection not found");
+    if (connection.status === "disconnected") {
+      return;
+    }
+
     await ctx.db.patch(args.stripeConnectionId, {
       status: "error" as const,
       errorCode: args.errorCode,
