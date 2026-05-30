@@ -5,6 +5,7 @@ import type { MutationCtx } from "./_generated/server";
 import { assertOwner, requireUserId } from "./authHelpers";
 import {
   addRevenueToStats,
+  getCurrentLocalMonthKey,
   markRevenueStatsVersion,
   readRevenueStats,
   removeRevenueFromStats,
@@ -29,6 +30,19 @@ type RevenueFilterArgs = {
   search?: string;
   importSessionId?: Id<"importSessions">;
   limit?: number;
+};
+
+type RevenueImportRow = {
+  title: string;
+  amount: number;
+  date: string;
+  provider: string;
+  customer?: string;
+  fee?: number;
+  netAmount: number;
+  currency?: string;
+  transactionId?: string;
+  notes?: string;
 };
 
 function getListLimit(value: number | undefined) {
@@ -94,6 +108,26 @@ async function assertImportSessionBelongsToUser(
 ) {
   const importSession = await ctx.db.get(importSessionId);
   assertOwner(importSession, userId, "Import session not found");
+}
+
+function validateRevenueImportRow(revenue: RevenueImportRow) {
+  if (revenue.amount <= 0) {
+    throw new Error("Amount must be greater than 0");
+  }
+  if (revenue.netAmount < 0) {
+    throw new Error("Net amount cannot be negative");
+  }
+  if (revenue.provider.trim() === "") {
+    throw new Error("Provider is required");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(revenue.date)) {
+    throw new Error("Date must be in YYYY-MM-DD format");
+  }
+
+  const parsed = new Date(`${revenue.date}T00:00:00Z`);
+  if (isNaN(parsed.getTime())) {
+    throw new Error("Invalid date value");
+  }
 }
 
 export const list = query({
@@ -225,7 +259,7 @@ export const getStats = query({
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
     const stats = await readRevenueStats(ctx, userId);
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const currentMonth = getCurrentLocalMonthKey();
 
     return {
       ...stats,
@@ -320,48 +354,34 @@ export const bulkCreate = mutation({
       const revenue = args.revenues[i];
 
       try {
-        if (revenue.amount <= 0) {
-          throw new Error("Amount must be greater than 0");
-        }
-        if (revenue.netAmount < 0) {
-          throw new Error("Net amount cannot be negative");
-        }
-        if (revenue.provider.trim() === "") {
-          throw new Error("Provider is required");
-        }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(revenue.date)) {
-          throw new Error("Date must be in YYYY-MM-DD format");
-        }
-        const parsed = new Date(`${revenue.date}T00:00:00Z`);
-        if (isNaN(parsed.getTime())) {
-          throw new Error("Invalid date value");
-        }
-
-        const revenueFields = markRevenueStatsVersion({
-          title: revenue.title,
-          amount: revenue.amount,
-          date: revenue.date,
-          provider: revenue.provider,
-          customer: revenue.customer,
-          fee: revenue.fee,
-          netAmount: revenue.netAmount,
-          currency: revenue.currency,
-          transactionId: revenue.transactionId,
-          notes: revenue.notes,
-          source: "import" as const,
-          importSessionId: args.importSessionId,
-          userId,
-        });
-        await ctx.db.insert("revenues", revenueFields);
-        await addRevenueToStats(ctx, revenueFields);
-        imported += 1;
+        validateRevenueImportRow(revenue);
       } catch (error) {
         errors.push({
           row: i + 1,
           message:
             error instanceof Error ? error.message : "Unknown import error",
         });
+        continue;
       }
+
+      const revenueFields = markRevenueStatsVersion({
+        title: revenue.title,
+        amount: revenue.amount,
+        date: revenue.date,
+        provider: revenue.provider,
+        customer: revenue.customer,
+        fee: revenue.fee,
+        netAmount: revenue.netAmount,
+        currency: revenue.currency,
+        transactionId: revenue.transactionId,
+        notes: revenue.notes,
+        source: "import" as const,
+        importSessionId: args.importSessionId,
+        userId,
+      });
+      await ctx.db.insert("revenues", revenueFields);
+      await addRevenueToStats(ctx, revenueFields);
+      imported += 1;
     }
 
     return { imported, errors };

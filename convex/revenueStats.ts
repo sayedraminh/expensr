@@ -37,6 +37,10 @@ export function markRevenueStatsVersion<T extends object>(
   };
 }
 
+export function getCurrentLocalMonthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export async function addRevenueToStats(
   ctx: MutationCtx,
   revenue: RevenueStatsDraft
@@ -184,7 +188,7 @@ function addRevenueToSummary(
 }
 
 function finalizeSummary(summary: MutableRevenueSummary) {
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getCurrentLocalMonthKey();
   const thisMonth = summary.monthlyTotals.get(currentMonth)?.amount ?? 0;
 
   return {
