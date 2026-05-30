@@ -112,7 +112,8 @@ export function RevenueTable({ revenues, filters }: RevenueTableProps) {
         </div>
         <h3 className="mt-4 text-lg font-medium">No revenue yet</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Import RevenueCat, Stripe, Lemon Squeezy, or PayPal CSV exports.
+          Connect Stripe or import RevenueCat, Lemon Squeezy, and PayPal CSV
+          exports.
         </p>
         <div className="mt-6 flex gap-3">
           <Button

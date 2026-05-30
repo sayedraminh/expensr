@@ -5,12 +5,30 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@font-face {
+  font-family: "Arcadia Display Variable";
+  src:
+    local("Arcadia Display Variable"),
+    local("Arcadia-Display-Variable");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Arcadia Regular";
+  src: local("Arcadia Regular"), local("Arcadia-Regular");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-sans: var(--font-arcadia);
+  --font-mono: var(--font-code);
+  --font-heading: var(--font-arcadia-display);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -52,73 +70,79 @@
 
 /* ── Light theme ─────────────────────────────────────────── */
 :root {
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.141 0.005 286);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 286);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 286);
-  --primary: oklch(0.51 0.177 163.22);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286);
-  --secondary-foreground: oklch(0.21 0.006 286);
-  --muted: oklch(0.967 0.001 286);
-  --muted-foreground: oklch(0.502 0.007 286);
-  --accent: oklch(0.967 0.001 286);
-  --accent-foreground: oklch(0.21 0.006 286);
-  --destructive: oklch(0.577 0.245 27.33);
-  --border: oklch(0.92 0.004 286);
-  --input: oklch(0.92 0.004 286);
-  --ring: oklch(0.51 0.177 163.22);
-  --chart-1: oklch(0.51 0.177 163.22);
-  --chart-2: oklch(0.546 0.245 262.88);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.577 0.245 27.33);
-  --chart-5: oklch(0.549 0.238 291.38);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.978 0.001 286);
-  --sidebar-foreground: oklch(0.141 0.005 286);
-  --sidebar-primary: oklch(0.51 0.177 163.22);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.967 0.001 286);
-  --sidebar-accent-foreground: oklch(0.21 0.006 286);
-  --sidebar-border: oklch(0.92 0.004 286);
-  --sidebar-ring: oklch(0.51 0.177 163.22);
+  --font-arcadia: "Arcadia Regular", "Arcadia-Regular", ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-arcadia-display: "Arcadia Display Variable", "Arcadia Display",
+    var(--font-arcadia);
+  --font-code: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono",
+    monospace;
+  --background: #f7f6f3;
+  --foreground: #191922;
+  --card: #ffffff;
+  --card-foreground: #191922;
+  --popover: #ffffff;
+  --popover-foreground: #191922;
+  --primary: #5e6cf2;
+  --primary-foreground: #ffffff;
+  --secondary: #eceaf3;
+  --secondary-foreground: #232332;
+  --muted: #eceaf3;
+  --muted-foreground: #6d6a78;
+  --accent: #e4e2ec;
+  --accent-foreground: #232332;
+  --destructive: #cf425d;
+  --border: #dedbe7;
+  --input: #dedbe7;
+  --ring: #7482ff;
+  --chart-1: #6c78f5;
+  --chart-2: #8da0ff;
+  --chart-3: #54bd87;
+  --chart-4: #e17a92;
+  --chart-5: #b8a6ff;
+  --radius: 0.75rem;
+  --sidebar: #efedf6;
+  --sidebar-foreground: #191922;
+  --sidebar-primary: #5e6cf2;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e4e2ec;
+  --sidebar-accent-foreground: #232332;
+  --sidebar-border: #dedbe7;
+  --sidebar-ring: #7482ff;
 }
 
-/* ── Dark theme — "Precision Ledger" ─────────────────────── */
+/* ── Dark theme — Mercury-inspired operations palette ────── */
 .dark {
-  --background: oklch(0.141 0.005 286);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.178 0.005 286);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.178 0.005 286);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.765 0.177 163.22);
-  --primary-foreground: oklch(0.141 0.005 286);
-  --secondary: oklch(0.224 0.006 286);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.224 0.006 286);
-  --muted-foreground: oklch(0.63 0.012 286);
-  --accent: oklch(0.224 0.006 286);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.22);
-  --border: oklch(0.274 0.006 286);
-  --input: oklch(0.274 0.006 286);
-  --ring: oklch(0.765 0.177 163.22);
-  --chart-1: oklch(0.765 0.177 163.22);
-  --chart-2: oklch(0.623 0.214 259.82);
-  --chart-3: oklch(0.795 0.184 86.05);
-  --chart-4: oklch(0.645 0.246 16.44);
-  --chart-5: oklch(0.606 0.25 292.72);
-  --sidebar: oklch(0.16 0.005 286);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.765 0.177 163.22);
-  --sidebar-primary-foreground: oklch(0.141 0.005 286);
-  --sidebar-accent: oklch(0.224 0.006 286);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.274 0.006 286);
-  --sidebar-ring: oklch(0.765 0.177 163.22);
+  --background: #171720;
+  --foreground: #f6f2ee;
+  --card: #1f1f2a;
+  --card-foreground: #f6f2ee;
+  --popover: #22222e;
+  --popover-foreground: #f6f2ee;
+  --primary: #7a87ff;
+  --primary-foreground: #faf9ff;
+  --secondary: #2b2a38;
+  --secondary-foreground: #f6f2ee;
+  --muted: #292836;
+  --muted-foreground: #aaa6b7;
+  --accent: #303040;
+  --accent-foreground: #f6f2ee;
+  --destructive: #f27f96;
+  --border: #343342;
+  --input: #343342;
+  --ring: #8d9cff;
+  --chart-1: #7a87ff;
+  --chart-2: #91a2ff;
+  --chart-3: #6fd3a2;
+  --chart-4: #f08aa0;
+  --chart-5: #c3b5ff;
+  --sidebar: #14141c;
+  --sidebar-foreground: #f6f2ee;
+  --sidebar-primary: #7a87ff;
+  --sidebar-primary-foreground: #faf9ff;
+  --sidebar-accent: #242432;
+  --sidebar-accent-foreground: #f6f2ee;
+  --sidebar-border: #30303e;
+  --sidebar-ring: #8d9cff;
 }
 
 @layer base {
@@ -127,9 +151,16 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-arcadia);
   }
   html {
     @apply font-sans;
+  }
+  h1,
+  h2,
+  h3,
+  [data-slot="card-title"] {
+    font-family: var(--font-arcadia-display);
   }
 }
 

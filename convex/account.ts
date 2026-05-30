@@ -51,6 +51,18 @@ export const getOverview = query({
       .query("paymentMethods")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .take(COUNT_LIMIT);
+    const plaidItems = await ctx.db
+      .query("plaidItems")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(COUNT_LIMIT);
+    const plaidAccounts = await ctx.db
+      .query("plaidAccounts")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(COUNT_LIMIT);
+    const stripeConnections = await ctx.db
+      .query("stripeConnections")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(COUNT_LIMIT);
 
     const hasLegacyData =
       legacyClaimAllowed &&
@@ -87,6 +99,9 @@ export const getOverview = query({
       importSessions: countResult(importSessions),
       categories: countResult(categories),
       paymentMethods: countResult(paymentMethods),
+      plaidItems: countResult(plaidItems),
+      plaidAccounts: countResult(plaidAccounts),
+      stripeConnections: countResult(stripeConnections),
       hasLegacyData,
     };
   },
@@ -195,6 +210,18 @@ export const deleteMyData = mutation({
       .query("settings")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .take(BATCH_SIZE);
+    const plaidAccounts = await ctx.db
+      .query("plaidAccounts")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(BATCH_SIZE);
+    const plaidItems = await ctx.db
+      .query("plaidItems")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(BATCH_SIZE);
+    const stripeConnections = await ctx.db
+      .query("stripeConnections")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(BATCH_SIZE);
 
     for (const row of expenses) await ctx.db.delete(row._id);
     for (const row of revenues) await ctx.db.delete(row._id);
@@ -202,6 +229,9 @@ export const deleteMyData = mutation({
     for (const row of categories) await ctx.db.delete(row._id);
     for (const row of paymentMethods) await ctx.db.delete(row._id);
     for (const row of settings) await ctx.db.delete(row._id);
+    for (const row of plaidAccounts) await ctx.db.delete(row._id);
+    for (const row of plaidItems) await ctx.db.delete(row._id);
+    for (const row of stripeConnections) await ctx.db.delete(row._id);
 
     const done =
       expenses.length < BATCH_SIZE &&
@@ -209,7 +239,10 @@ export const deleteMyData = mutation({
       importSessions.length < BATCH_SIZE &&
       categories.length < BATCH_SIZE &&
       paymentMethods.length < BATCH_SIZE &&
-      settings.length < BATCH_SIZE;
+      settings.length < BATCH_SIZE &&
+      plaidAccounts.length < BATCH_SIZE &&
+      plaidItems.length < BATCH_SIZE &&
+      stripeConnections.length < BATCH_SIZE;
 
     return {
       done,
@@ -220,6 +253,9 @@ export const deleteMyData = mutation({
         categories: categories.length,
         paymentMethods: paymentMethods.length,
         settings: settings.length,
+        plaidAccounts: plaidAccounts.length,
+        plaidItems: plaidItems.length,
+        stripeConnections: stripeConnections.length,
       },
     };
   },

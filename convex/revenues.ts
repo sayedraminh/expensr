@@ -5,6 +5,7 @@ import type { MutationCtx } from "./_generated/server";
 import { assertOwner, requireUserId } from "./authHelpers";
 
 const MAX_REVENUES_FOR_FILTERING = 5000;
+const DELETE_IMPORTED_REVENUE_BATCH_SIZE = 128;
 
 const revenueFilterArgs = {
   provider: v.optional(v.string()),
@@ -203,6 +204,114 @@ export const filteredSummary = query({
   },
 });
 
+export const getStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const allRevenues = await ctx.db
+      .query("revenues")
+      .withIndex("by_userId_and_date", (q) => q.eq("userId", userId))
+      .take(MAX_REVENUES_FOR_FILTERING);
+
+    const total = allRevenues.length;
+    const totalAmount = allRevenues.reduce(
+      (sum, revenue) => sum + revenue.amount,
+      0,
+    );
+    const totalFees = allRevenues.reduce(
+      (sum, revenue) => sum + (revenue.fee ?? 0),
+      0,
+    );
+    const totalNet = allRevenues.reduce(
+      (sum, revenue) => sum + revenue.netAmount,
+      0,
+    );
+
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(
+      now.getMonth() + 1,
+    ).padStart(2, "0")}`;
+    const thisMonthRevenues = allRevenues.filter((revenue) =>
+      revenue.date.startsWith(currentMonth),
+    );
+    const thisMonthAmount = thisMonthRevenues.reduce(
+      (sum, revenue) => sum + revenue.amount,
+      0,
+    );
+    const thisMonthNet = thisMonthRevenues.reduce(
+      (sum, revenue) => sum + revenue.netAmount,
+      0,
+    );
+
+    const monthlyMap = new Map<
+      string,
+      { amount: number; netAmount: number; count: number }
+    >();
+    for (const revenue of allRevenues) {
+      const month = revenue.date.substring(0, 7);
+      const existing = monthlyMap.get(month);
+
+      if (existing) {
+        existing.amount += revenue.amount;
+        existing.netAmount += revenue.netAmount;
+        existing.count += 1;
+        continue;
+      }
+
+      monthlyMap.set(month, {
+        amount: revenue.amount,
+        netAmount: revenue.netAmount,
+        count: 1,
+      });
+    }
+    const monthlyTotals = Array.from(monthlyMap.entries())
+      .map(([month, totals]) => ({ month, ...totals }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+
+    const providerMap = new Map<
+      string,
+      { provider: string; totalAmount: number; totalNet: number; count: number }
+    >();
+    for (const revenue of allRevenues) {
+      const providerName = revenue.provider.trim() || "Unknown source";
+      const providerKey = providerName.toLowerCase();
+      const existing = providerMap.get(providerKey);
+
+      if (existing) {
+        existing.totalAmount += revenue.amount;
+        existing.totalNet += revenue.netAmount;
+        existing.count += 1;
+        continue;
+      }
+
+      providerMap.set(providerKey, {
+        provider: providerName,
+        totalAmount: revenue.amount,
+        totalNet: revenue.netAmount,
+        count: 1,
+      });
+    }
+    const providerTotals = Array.from(providerMap.values())
+      .sort(
+        (a, b) =>
+          b.totalAmount - a.totalAmount ||
+          a.provider.localeCompare(b.provider),
+      )
+      .slice(0, 8);
+
+    return {
+      total,
+      totalAmount,
+      totalFees,
+      totalNet,
+      thisMonthAmount,
+      thisMonthNet,
+      monthlyTotals,
+      providerTotals,
+    };
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("revenues") },
   handler: async (ctx, args) => {
@@ -211,6 +320,40 @@ export const remove = mutation({
     assertOwner(existing, userId, "Revenue entry not found");
 
     await ctx.db.delete(args.id);
+  },
+});
+
+export const deleteImportedRevenueBatch = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const revenues = await ctx.db
+      .query("revenues")
+      .withIndex("by_userId_and_source", (q) =>
+        q.eq("userId", userId).eq("source", "import")
+      )
+      .take(DELETE_IMPORTED_REVENUE_BATCH_SIZE);
+    const importSessions = await ctx.db
+      .query("importSessions")
+      .withIndex("by_userId_and_entityType", (q) =>
+        q.eq("userId", userId).eq("entityType", "revenue")
+      )
+      .take(DELETE_IMPORTED_REVENUE_BATCH_SIZE);
+
+    for (const revenue of revenues) {
+      await ctx.db.delete(revenue._id);
+    }
+    for (const importSession of importSessions) {
+      await ctx.db.delete(importSession._id);
+    }
+
+    return {
+      done:
+        revenues.length < DELETE_IMPORTED_REVENUE_BATCH_SIZE &&
+        importSessions.length < DELETE_IMPORTED_REVENUE_BATCH_SIZE,
+      deletedRevenues: revenues.length,
+      deletedImportSessions: importSessions.length,
+    };
   },
 });
 

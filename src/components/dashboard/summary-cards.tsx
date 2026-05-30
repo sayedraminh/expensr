@@ -5,12 +5,13 @@ import { useAuthenticatedQuery } from "@/hooks/use-authenticated-query";
 import { formatCurrency } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Receipt, DollarSign, TrendingUp, Calendar } from "lucide-react";
+import { Calendar, DollarSign, Receipt, TrendingUp } from "lucide-react";
 
 export function SummaryCards() {
-  const stats = useAuthenticatedQuery(api.expenses.getStats, {});
+  const expenseStats = useAuthenticatedQuery(api.expenses.getStats, {});
+  const revenueStats = useAuthenticatedQuery(api.revenues.getStats, {});
 
-  if (stats === undefined) {
+  if (expenseStats === undefined || revenueStats === undefined) {
     return (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
@@ -32,24 +33,32 @@ export function SummaryCards() {
 
   const cards = [
     {
-      label: "Total Expenses",
-      value: stats.total.toLocaleString(),
+      label: "Total Spent",
+      value: formatCurrency(expenseStats.totalAmount),
+      description: `${expenseStats.total.toLocaleString()} expense rows`,
+      emphasis: "primary",
       icon: Receipt,
     },
     {
-      label: "Total Spent",
-      value: formatCurrency(stats.totalAmount),
+      label: "This Month Spend",
+      value: formatCurrency(expenseStats.thisMonthTotal),
+      description: "Current month expenses",
+      emphasis: "primary",
+      icon: Calendar,
+    },
+    {
+      label: "Average Expense",
+      value: formatCurrency(expenseStats.avgAmount),
+      description: "Per expense row",
+      emphasis: "primary",
       icon: DollarSign,
     },
     {
-      label: "Average",
-      value: formatCurrency(stats.avgAmount),
+      label: "Gross Revenue",
+      value: formatCurrency(revenueStats.totalAmount),
+      description: `Net ${formatCurrency(revenueStats.totalNet)}`,
+      emphasis: "secondary",
       icon: TrendingUp,
-    },
-    {
-      label: "This Month",
-      value: formatCurrency(stats.thisMonthTotal),
-      icon: Calendar,
     },
   ];
 
@@ -61,12 +70,27 @@ export function SummaryCards() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">{card.label}</p>
-                <p className="text-2xl font-bold font-mono mt-1">
+                <p className="mt-1 font-mono text-2xl font-bold">
                   {card.value}
                 </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {card.description}
+                </p>
               </div>
-              <div className="rounded-lg bg-primary/10 p-3">
-                <card.icon className="h-5 w-5 text-primary" />
+              <div
+                className={
+                  card.emphasis === "secondary"
+                    ? "rounded-lg bg-emerald-500/10 p-3"
+                    : "rounded-lg bg-primary/10 p-3"
+                }
+              >
+                <card.icon
+                  className={
+                    card.emphasis === "secondary"
+                      ? "h-5 w-5 text-emerald-400"
+                      : "h-5 w-5 text-primary"
+                  }
+                />
               </div>
             </div>
           </CardContent>

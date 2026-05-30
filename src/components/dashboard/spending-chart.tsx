@@ -3,7 +3,13 @@
 import { api } from "@/convex";
 import { useAuthenticatedQuery } from "@/hooks/use-authenticated-query";
 import { formatCurrency } from "@/lib/format";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChartContainer,
@@ -28,13 +34,15 @@ const categoryChartConfig = {
 } satisfies ChartConfig;
 
 const monthlyChartConfig = {
-  amount: { label: "Amount", color: "var(--chart-1)" },
+  expenses: { label: "Expenses", color: "var(--chart-1)" },
+  revenue: { label: "Net Revenue", color: "var(--chart-2)" },
 } satisfies ChartConfig;
 
 export function SpendingChart() {
-  const stats = useAuthenticatedQuery(api.expenses.getStats, {});
+  const expenseStats = useAuthenticatedQuery(api.expenses.getStats, {});
+  const revenueStats = useAuthenticatedQuery(api.revenues.getStats, {});
 
-  if (stats === undefined) {
+  if (expenseStats === undefined || revenueStats === undefined) {
     return (
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
@@ -57,8 +65,38 @@ export function SpendingChart() {
     );
   }
 
-  const categoryData = stats.categoryTotals.slice(0, 8);
-  const monthlyData = stats.monthlyTotals;
+  const categoryData = expenseStats.categoryTotals.slice(0, 8);
+  const monthlyByMonth = new Map<
+    string,
+    { month: string; expenses: number; revenue: number }
+  >();
+
+  for (const month of expenseStats.monthlyTotals) {
+    monthlyByMonth.set(month.month, {
+      month: month.month,
+      expenses: month.amount,
+      revenue: 0,
+    });
+  }
+
+  for (const month of revenueStats.monthlyTotals) {
+    const existing = monthlyByMonth.get(month.month);
+
+    if (existing) {
+      existing.revenue = month.netAmount;
+      continue;
+    }
+
+    monthlyByMonth.set(month.month, {
+      month: month.month,
+      expenses: 0,
+      revenue: month.netAmount,
+    });
+  }
+
+  const monthlyData = Array.from(monthlyByMonth.values()).sort((a, b) =>
+    a.month.localeCompare(b.month),
+  );
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -69,11 +107,12 @@ export function SpendingChart() {
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
             Spending by Category
           </CardTitle>
+          <CardDescription>Expense totals by category</CardDescription>
         </CardHeader>
         <CardContent>
           {categoryData.length === 0 ? (
             <div className="flex h-[300px] items-center justify-center text-muted-foreground">
-              <p>No data yet</p>
+              <p>No expense data yet</p>
             </div>
           ) : (
             <ChartContainer
@@ -139,18 +178,19 @@ export function SpendingChart() {
         </CardContent>
       </Card>
 
-      {/* Monthly Trend */}
+      {/* Monthly Cashflow */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            Monthly Trend
+            Monthly Cashflow
           </CardTitle>
+          <CardDescription>Expenses and net revenue by month</CardDescription>
         </CardHeader>
         <CardContent>
           {monthlyData.length === 0 ? (
             <div className="flex h-[300px] items-center justify-center text-muted-foreground">
-              <p>No data yet</p>
+              <p>No expense or revenue data yet</p>
             </div>
           ) : (
             <ChartContainer
@@ -163,7 +203,7 @@ export function SpendingChart() {
               >
                 <defs>
                   <linearGradient
-                    id="monthlyGradient"
+                    id="expensesGradient"
                     x1="0"
                     y1="0"
                     x2="0"
@@ -171,12 +211,30 @@ export function SpendingChart() {
                   >
                     <stop
                       offset="5%"
-                      stopColor="var(--color-amount)"
+                      stopColor="var(--color-expenses)"
                       stopOpacity={0.3}
                     />
                     <stop
                       offset="95%"
-                      stopColor="var(--color-amount)"
+                      stopColor="var(--color-expenses)"
+                      stopOpacity={0}
+                    />
+                  </linearGradient>
+                  <linearGradient
+                    id="revenueGradient"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop
+                      offset="5%"
+                      stopColor="var(--color-revenue)"
+                      stopOpacity={0.25}
+                    />
+                    <stop
+                      offset="95%"
+                      stopColor="var(--color-revenue)"
                       stopOpacity={0}
                     />
                   </linearGradient>
@@ -204,18 +262,32 @@ export function SpendingChart() {
                 <ChartTooltip
                   content={
                     <ChartTooltipContent
-                      formatter={(value) =>
-                        formatCurrency(value as number)
-                      }
+                      formatter={(value, name) => (
+                        <>
+                          <span className="text-muted-foreground">
+                            {name === "revenue" ? "Net Revenue" : "Expenses"}
+                          </span>
+                          <span className="ml-auto font-mono font-medium text-foreground tabular-nums">
+                            {formatCurrency(value as number)}
+                          </span>
+                        </>
+                      )}
                     />
                   }
                 />
                 <Area
                   type="monotone"
-                  dataKey="amount"
-                  stroke="var(--color-amount)"
+                  dataKey="revenue"
+                  stroke="var(--color-revenue)"
                   strokeWidth={2}
-                  fill="url(#monthlyGradient)"
+                  fill="url(#revenueGradient)"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="expenses"
+                  stroke="var(--color-expenses)"
+                  strokeWidth={2}
+                  fill="url(#expensesGradient)"
                 />
               </AreaChart>
             </ChartContainer>

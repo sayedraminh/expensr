@@ -23,8 +23,17 @@ export default defineSchema({
     paymentMethodId: v.optional(v.id("paymentMethods")),
     notes: v.optional(v.string()),
     vendor: v.optional(v.string()),
-    source: v.union(v.literal("manual"), v.literal("import")),
+    source: v.union(
+      v.literal("manual"),
+      v.literal("import"),
+      v.literal("plaid")
+    ),
     importSessionId: v.optional(v.id("importSessions")),
+    plaidTransactionId: v.optional(v.string()),
+    plaidAccountId: v.optional(v.id("plaidAccounts")),
+    plaidPendingTransactionId: v.optional(v.string()),
+    plaidCategory: v.optional(v.string()),
+    pending: v.optional(v.boolean()),
     userId: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
@@ -32,6 +41,11 @@ export default defineSchema({
     .index("by_userId_and_categoryId", ["userId", "categoryId"])
     .index("by_userId_and_paymentMethodId", ["userId", "paymentMethodId"])
     .index("by_userId_and_importSessionId", ["userId", "importSessionId"])
+    .index("by_userId_and_plaidTransactionId", [
+      "userId",
+      "plaidTransactionId",
+    ])
+    .index("by_userId_and_plaidAccountId", ["userId", "plaidAccountId"])
     .index("by_date", ["date"])
     .index("by_category", ["categoryId"])
     .index("by_paymentMethod", ["paymentMethodId"])
@@ -47,8 +61,15 @@ export default defineSchema({
     netAmount: v.number(),
     currency: v.optional(v.string()),
     transactionId: v.optional(v.string()),
+    stripeBalanceTransactionId: v.optional(v.string()),
+    stripeChargeId: v.optional(v.string()),
+    stripeConnectionId: v.optional(v.id("stripeConnections")),
     notes: v.optional(v.string()),
-    source: v.union(v.literal("manual"), v.literal("import")),
+    source: v.union(
+      v.literal("manual"),
+      v.literal("import"),
+      v.literal("stripe")
+    ),
     importSessionId: v.optional(v.id("importSessions")),
     userId: v.optional(v.string()),
   })
@@ -56,6 +77,15 @@ export default defineSchema({
     .index("by_userId_and_date", ["userId", "date"])
     .index("by_userId_and_provider", ["userId", "provider"])
     .index("by_userId_and_importSessionId", ["userId", "importSessionId"])
+    .index("by_userId_and_source", ["userId", "source"])
+    .index("by_userId_and_stripeBalanceTransactionId", [
+      "userId",
+      "stripeBalanceTransactionId",
+    ])
+    .index("by_userId_and_stripeConnectionId", [
+      "userId",
+      "stripeConnectionId",
+    ])
     .index("by_date", ["date"])
     .index("by_provider", ["provider"])
     .index("by_importSession", ["importSessionId"]),
@@ -103,7 +133,9 @@ export default defineSchema({
       )
     ),
     userId: v.optional(v.string()),
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_entityType", ["userId", "entityType"]),
 
   settings: defineTable({
     key: v.string(),
@@ -113,4 +145,70 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_userId_and_key", ["userId", "key"])
     .index("by_key", ["key"]),
+
+  plaidItems: defineTable({
+    userId: v.string(),
+    itemId: v.string(),
+    accessToken: v.string(),
+    institutionId: v.optional(v.string()),
+    institutionName: v.optional(v.string()),
+    cursor: v.optional(v.string()),
+    status: v.union(
+      v.literal("active"),
+      v.literal("disconnected"),
+      v.literal("error")
+    ),
+    errorCode: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    lastSyncedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_status", ["status"])
+    .index("by_itemId", ["itemId"])
+    .index("by_userId_and_itemId", ["userId", "itemId"])
+    .index("by_userId_and_status", ["userId", "status"]),
+
+  plaidAccounts: defineTable({
+    userId: v.string(),
+    plaidItemId: v.id("plaidItems"),
+    accountId: v.string(),
+    name: v.string(),
+    officialName: v.optional(v.string()),
+    mask: v.optional(v.string()),
+    type: v.string(),
+    subtype: v.optional(v.string()),
+    availableBalance: v.optional(v.number()),
+    currentBalance: v.optional(v.number()),
+    isoCurrencyCode: v.optional(v.string()),
+    isActive: v.boolean(),
+    lastSyncedAt: v.optional(v.number()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_plaidItemId", ["plaidItemId"])
+    .index("by_userId_and_plaidItemId", ["userId", "plaidItemId"])
+    .index("by_userId_and_accountId", ["userId", "accountId"]),
+
+  stripeConnections: defineTable({
+    userId: v.string(),
+    apiKey: v.optional(v.string()),
+    apiKeyCiphertext: v.optional(v.string()),
+    apiKeyNonce: v.optional(v.string()),
+    keyLast4: v.string(),
+    keyMode: v.union(v.literal("live"), v.literal("test")),
+    status: v.union(
+      v.literal("active"),
+      v.literal("disconnected"),
+      v.literal("error")
+    ),
+    errorCode: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    lastSyncedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_status", ["status"])
+    .index("by_userId_and_status", ["userId", "status"]),
 });

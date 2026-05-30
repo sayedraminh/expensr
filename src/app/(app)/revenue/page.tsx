@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useMutation } from "convex/react";
 import { api } from "@/convex";
 import { useAuthenticatedQuery } from "@/hooks/use-authenticated-query";
 import { formatCurrency } from "@/lib/format";
@@ -19,6 +20,7 @@ import {
   RevenueTable,
   type RevenueListItem,
 } from "@/components/revenue/revenue-table";
+import { StripeConnectionCard } from "@/components/stripe/stripe-connection-card";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -28,7 +30,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowUpRight, Download, Store, Upload } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowUpRight,
+  CheckCircle2,
+  Download,
+  Loader2,
+  Store,
+  Trash2,
+  Upload,
+} from "lucide-react";
 
 type RevenueQueryArgs = {
   search?: string;
@@ -59,6 +70,12 @@ export default function RevenuePage() {
   const [filters, setFilters] = useState<RevenueFilterState>(
     DEFAULT_REVENUE_FILTERS,
   );
+  const deleteImportedRevenueBatch = useMutation(
+    api.revenues.deleteImportedRevenueBatch,
+  );
+  const [deletingImportedRevenue, setDeletingImportedRevenue] = useState(false);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const queryArgs = buildRevenueQueryArgs(filters);
   const referenceQueryArgs = buildReferenceQueryArgs(filters);
@@ -96,6 +113,47 @@ export default function RevenuePage() {
     );
   };
 
+  const handleDeleteImportedRevenue = async () => {
+    const confirmed = window.confirm(
+      "Delete all revenue imported from CSV files? Stripe-synced revenue will be kept.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingImportedRevenue(true);
+    setDeleteNotice(null);
+    setDeleteError(null);
+
+    try {
+      let done = false;
+      let deletedRevenues = 0;
+      let deletedImportSessions = 0;
+      while (!done) {
+        const result = await deleteImportedRevenueBatch({});
+        deletedRevenues += result.deletedRevenues;
+        deletedImportSessions += result.deletedImportSessions;
+        done = result.done;
+      }
+
+      setDeleteNotice(
+        `Deleted ${deletedRevenues.toLocaleString()} CSV revenue row${
+          deletedRevenues === 1 ? "" : "s"
+        } and ${deletedImportSessions.toLocaleString()} revenue import record${
+          deletedImportSessions === 1 ? "" : "s"
+        }.`,
+      );
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error
+          ? error.message
+          : "Could not delete CSV-imported revenue.",
+      );
+    } finally {
+      setDeletingImportedRevenue(false);
+    }
+  };
+
   return (
     <div className="space-y-6" data-animate>
       <div className="flex items-center justify-between">
@@ -106,6 +164,19 @@ export default function RevenuePage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleDeleteImportedRevenue}
+            disabled={deletingImportedRevenue}
+          >
+            {deletingImportedRevenue ? (
+              <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="mr-1.5 size-3.5" />
+            )}
+            Delete CSV Imports
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -125,6 +196,22 @@ export default function RevenuePage() {
           </Button>
         </div>
       </div>
+
+      {deleteNotice && (
+        <div className="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+          <p>{deleteNotice}</p>
+        </div>
+      )}
+
+      {deleteError && (
+        <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          <p>{deleteError}</p>
+        </div>
+      )}
+
+      <StripeConnectionCard />
 
       <RevenueFilters
         filters={filters}
