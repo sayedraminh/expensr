@@ -1368,14 +1368,20 @@ export const listSyncableItems = internalQuery({
   handler: async (ctx) => {
     const activeItems = await ctx.db
       .query("plaidItems")
-      .withIndex("by_status", (q) => q.eq("status", "active"))
+      .withIndex("by_status_and_lastSyncedAt", (q) =>
+        q.eq("status", "active")
+      )
+      .order("asc")
       .take(MAX_SYNC_ITEMS_PER_CRON);
     const remaining = MAX_SYNC_ITEMS_PER_CRON - activeItems.length;
     const errorItems =
       remaining > 0
         ? await ctx.db
             .query("plaidItems")
-            .withIndex("by_status", (q) => q.eq("status", "error"))
+            .withIndex("by_status_and_lastSyncedAt", (q) =>
+              q.eq("status", "error")
+            )
+            .order("asc")
             .take(remaining)
         : [];
 

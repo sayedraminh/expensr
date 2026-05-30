@@ -204,7 +204,8 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_itemId", ["itemId"])
     .index("by_userId_and_itemId", ["userId", "itemId"])
-    .index("by_userId_and_status", ["userId", "status"]),
+    .index("by_userId_and_status", ["userId", "status"])
+    .index("by_status_and_lastSyncedAt", ["status", "lastSyncedAt"]),
 
   plaidAccounts: defineTable({
     userId: v.string(),
@@ -241,10 +242,13 @@ export default defineSchema({
     errorCode: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
     lastSyncedAt: v.optional(v.number()),
+    syncCursor: v.optional(v.string()),
+    syncStartUnix: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
-    .index("by_userId_and_status", ["userId", "status"]),
+    .index("by_userId_and_status", ["userId", "status"])
+    .index("by_status_and_lastSyncedAt", ["status", "lastSyncedAt"]),
 });

@@ -63,6 +63,10 @@ function getNumberField(record: Record<string, unknown>, field: string) {
   return typeof record[field] === "number" ? record[field] : 0;
 }
 
+function getBooleanField(record: Record<string, unknown>, field: string) {
+  return record[field] === true;
+}
+
 function describeSyncResult(result: unknown) {
   if (!result || typeof result !== "object") {
     return "Stripe connected. Revenue is syncing now.";
@@ -71,14 +75,20 @@ function describeSyncResult(result: unknown) {
   const record = result as Record<string, unknown>;
   const imported = getNumberField(record, "imported");
   const updated = getNumberField(record, "updated");
+  const hasMore = getBooleanField(record, "hasMore");
+  const continuationNote = hasMore
+    ? " More Stripe history remains; run sync again or wait for the next refresh."
+    : "";
 
   if (imported === 0 && updated === 0) {
-    return "Stripe connected. No new revenue charges were found yet.";
+    return hasMore
+      ? "Stripe sync saved progress." + continuationNote
+      : "Stripe connected. No new revenue charges were found yet.";
   }
 
   return `Synced ${imported} new and ${updated} updated revenue payment${
     imported + updated === 1 ? "" : "s"
-  }.`;
+  }.${continuationNote}`;
 }
 
 function formatTimestamp(value: number | null) {

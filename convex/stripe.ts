@@ -115,6 +115,8 @@ type SyncableStripeConnection = {
   apiKey: string;
   status: "active" | "disconnected" | "error";
   lastSyncedAt?: number;
+  syncCursor?: string;
+  syncStartUnix?: number;
 };
 
 type StoredStripeConnection = {
@@ -125,6 +127,8 @@ type StoredStripeConnection = {
   apiKeyNonce?: string;
   status: "active" | "disconnected" | "error";
   lastSyncedAt?: number;
+  syncCursor?: string;
+  syncStartUnix?: number;
 };
 
 type SyncOptions = {
@@ -135,6 +139,7 @@ type SyncSummary = {
   imported: number;
   updated: number;
   skipped: number;
+  hasMore: boolean;
 };
 
 type DisconnectSummary = {
@@ -507,6 +512,7 @@ function emptySummary(): SyncSummary {
     imported: 0,
     updated: 0,
     skipped: 0,
+    hasMore: false,
   };
 }
 
@@ -514,6 +520,7 @@ function addSummaries(total: SyncSummary, page: SyncSummary) {
   total.imported += page.imported;
   total.updated += page.updated;
   total.skipped += page.skipped;
+  total.hasMore = total.hasMore || page.hasMore;
 }
 
 function getSyncError(error: unknown) {
@@ -557,8 +564,11 @@ async function syncConnectionWithApiKey(
     throw new Error("This Stripe connection is disconnected.");
   }
 
-  const syncStartUnix = getSyncStartUnix(connection.lastSyncedAt, options);
-  let startingAfter: string | undefined;
+  const resumedCursor = optionalString(connection.syncCursor);
+  const syncStartUnix = resumedCursor
+    ? connection.syncStartUnix
+    : getSyncStartUnix(connection.lastSyncedAt, options);
+  let startingAfter = resumedCursor;
   let hasMore = true;
   let pageCount = 0;
   const summary = emptySummary();
@@ -598,9 +608,30 @@ async function syncConnectionWithApiKey(
   }
 
   if (hasMore) {
-    throw new Error(
-      `Stripe sync reached the ${MAX_SYNC_PAGES} page limit before finishing. Run the sync again to continue without advancing the saved sync time.`
+    if (!startingAfter) {
+      throw new Error("Stripe did not return a pagination cursor.");
+    }
+
+    const continuationArgs: {
+      userId: string;
+      stripeConnectionId: Id<"stripeConnections">;
+      syncCursor: string;
+      syncStartUnix?: number;
+    } = {
+      userId: connection.userId,
+      stripeConnectionId: connection.stripeConnectionId,
+      syncCursor: startingAfter,
+    };
+    if (syncStartUnix !== undefined) {
+      continuationArgs.syncStartUnix = syncStartUnix;
+    }
+
+    await ctx.runMutation(
+      internal.stripe.saveConnectionSyncCursor,
+      continuationArgs
     );
+    summary.hasMore = true;
+    return summary;
   }
 
   await ctx.runMutation(internal.stripe.finishConnectionSync, {
@@ -678,6 +709,8 @@ export const syncConnection = action({
       apiKey,
       status: storedConnection.status,
       lastSyncedAt: storedConnection.lastSyncedAt,
+      syncCursor: storedConnection.syncCursor,
+      syncStartUnix: storedConnection.syncStartUnix,
     };
 
     try {
@@ -777,6 +810,8 @@ export const syncAllConnectedConnections = internalAction({
           apiKey,
           status: connection.status,
           lastSyncedAt: connection.lastSyncedAt,
+          syncCursor: connection.syncCursor,
+          syncStartUnix: connection.syncStartUnix,
         });
         addSummaries(total, connectionSummary);
       } catch (error) {
@@ -861,6 +896,8 @@ export const upsertConnection = internalMutation({
         status: "active" as const,
         errorCode: undefined,
         errorMessage: undefined,
+        syncCursor: undefined,
+        syncStartUnix: undefined,
         updatedAt: now,
       });
       return { stripeConnectionId: existing._id };
@@ -920,6 +957,8 @@ export const getSyncableConnection = internalQuery({
       apiKeyNonce: connection.apiKeyNonce,
       status: connection.status,
       lastSyncedAt: connection.lastSyncedAt,
+      syncCursor: connection.syncCursor,
+      syncStartUnix: connection.syncStartUnix,
     };
   },
 });
@@ -941,6 +980,8 @@ export const getConnectionForOwner = internalQuery({
       apiKeyNonce: connection.apiKeyNonce,
       status: connection.status,
       lastSyncedAt: connection.lastSyncedAt,
+      syncCursor: connection.syncCursor,
+      syncStartUnix: connection.syncStartUnix,
     };
   },
 });
@@ -950,14 +991,20 @@ export const listSyncableConnections = internalQuery({
   handler: async (ctx) => {
     const activeConnections = await ctx.db
       .query("stripeConnections")
-      .withIndex("by_status", (q) => q.eq("status", "active"))
+      .withIndex("by_status_and_lastSyncedAt", (q) =>
+        q.eq("status", "active")
+      )
+      .order("asc")
       .take(MAX_SYNC_CONNECTIONS_PER_CRON);
     const remaining = MAX_SYNC_CONNECTIONS_PER_CRON - activeConnections.length;
     const errorConnections =
       remaining > 0
         ? await ctx.db
             .query("stripeConnections")
-            .withIndex("by_status", (q) => q.eq("status", "error"))
+            .withIndex("by_status_and_lastSyncedAt", (q) =>
+              q.eq("status", "error")
+            )
+            .order("asc")
             .take(remaining)
         : [];
 
@@ -969,6 +1016,8 @@ export const listSyncableConnections = internalQuery({
       apiKeyNonce: connection.apiKeyNonce,
       status: connection.status,
       lastSyncedAt: connection.lastSyncedAt,
+      syncCursor: connection.syncCursor,
+      syncStartUnix: connection.syncStartUnix,
     }));
   },
 });
@@ -991,6 +1040,8 @@ export const listDisconnectableConnectionsForUser = internalQuery({
         apiKeyNonce: connection.apiKeyNonce,
         status: connection.status,
         lastSyncedAt: connection.lastSyncedAt,
+        syncCursor: connection.syncCursor,
+        syncStartUnix: connection.syncStartUnix,
       }));
   },
 });
@@ -1073,8 +1124,35 @@ export const finishConnectionSync = internalMutation({
       status: "active" as const,
       errorCode: undefined,
       errorMessage: undefined,
+      syncCursor: undefined,
+      syncStartUnix: undefined,
       lastSyncedAt: args.lastSyncedAt,
       updatedAt: args.lastSyncedAt,
+    });
+  },
+});
+
+export const saveConnectionSyncCursor = internalMutation({
+  args: {
+    userId: v.string(),
+    stripeConnectionId: v.id("stripeConnections"),
+    syncCursor: v.string(),
+    syncStartUnix: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const connection = await ctx.db.get(args.stripeConnectionId);
+    assertOwner(connection, args.userId, "Stripe connection not found");
+    if (connection.status === "disconnected") {
+      return;
+    }
+
+    await ctx.db.patch(args.stripeConnectionId, {
+      status: "active" as const,
+      errorCode: undefined,
+      errorMessage: undefined,
+      syncCursor: args.syncCursor,
+      syncStartUnix: args.syncStartUnix,
+      updatedAt: Date.now(),
     });
   },
 });
@@ -1115,6 +1193,8 @@ export const markConnectionDisconnected = internalMutation({
       apiKeyCiphertext: undefined,
       apiKeyNonce: undefined,
       keyLast4: "",
+      syncCursor: undefined,
+      syncStartUnix: undefined,
       status: "disconnected" as const,
       updatedAt: Date.now(),
     });
